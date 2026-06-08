@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Schedule Viewer</title>
+  <link href="https://fonts.googleapis.com/css2?family=Salesforce+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue:       #0070d2;
+      --blue-dark:  #005fb2;
+      --blue-light: #e8f4fd;
+      --navy:       #16325c;
+      --text:       #16325c;
+      --text-mid:   #54698d;
+      --text-light: #aeaeae;
+      --border:     #dddbda;
+      --bg:         #f4f6f9;
+      --white:      #ffffff;
+      --green:      #027e46;
+      --green-bg:   #e3f5e1;
+      --yellow:     #8a6000;
+      --yellow-bg:  #fff3cd;
+      --red:        #c23934;
+      --red-bg:     #fde8e8;
+      --row-alt:    #f9fbff;
+      --shadow-sm:  0 1px 4px rgba(0,0,0,.1);
+      --radius:     6px;
+    }
+
+    body { font-family: 'Salesforce Sans','Helvetica Neue',Arial,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; font-size:14px; }
+
+    header {
+      background: linear-gradient(135deg, #032d60 0%, #0070d2 100%);
+      color: white; padding: 0 32px; height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 2px 6px rgba(0,0,0,.2);
+    }
+    .header-left { display:flex; align-items:center; gap:12px; }
+    .header-logo { width:32px; height:32px; background:rgba(255,255,255,.15); border-radius:8px; display:flex; align-items:center; justify-content:center; }
+
+    main { max-width:1280px; margin:0 auto; padding:24px 32px; }
+
+    .section-label { font-size:11px; font-weight:700; color:var(--text-mid); text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px; }
+
+    .card { background:var(--white); border-radius:var(--radius); box-shadow:var(--shadow-sm); border:1px solid var(--border); padding:20px 24px; margin-bottom:16px; }
+
+    .setup-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .setup-grid .full { grid-column:1/-1; }
+
+    .field-group { display:flex; flex-direction:column; gap:5px; }
+    .field-label { font-size:11px; font-weight:700; color:var(--text-mid); text-transform:uppercase; letter-spacing:.06em; }
+
+    select, input[type=text] {
+      width:100%; padding:8px 12px; border:1px solid var(--border);
+      border-radius:4px; font-size:13px; color:var(--text);
+      background:var(--white); font-family:inherit;
+      transition:border-color .15s, box-shadow .15s;
+    }
+    select {
+      appearance:none;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%2354698d' d='M5 6L0 0h10z'/%3E%3C/svg%3E");
+      background-repeat:no-repeat; background-position:right 12px center;
+      padding-right:32px; cursor:pointer;
+    }
+    select:focus, input[type=text]:focus { outline:none; border-color:var(--blue); box-shadow:0 0 0 3px rgba(0,112,210,.15); }
+    select:disabled { background-color:#f3f3f3; color:var(--text-light); cursor:not-allowed; }
+
+    .model-section { margin-top:16px; display:none; }
+    .model-list { display:flex; flex-direction:column; gap:6px; margin-top:8px; max-height:240px; overflow-y:auto; }
+    .model-item { display:flex; align-items:flex-start; gap:10px; padding:10px 14px; border:1px solid var(--border); border-radius:4px; cursor:pointer; transition:border-color .15s, background .15s; }
+    .model-item:hover { background:var(--blue-light); border-color:var(--blue); }
+    .model-item.selected { background:var(--blue-light); border:2px solid var(--blue); }
+    .model-item input[type=radio] { margin-top:3px; accent-color:var(--blue); flex-shrink:0; }
+    .model-item-name { font-weight:600; font-size:13px; }
+    .model-item-path { font-size:11px; color:var(--text-mid); margin-top:2px; }
+    .model-item-date { font-size:11px; color:var(--text-light); margin-top:2px; }
+
+    .tabs { display:flex; gap:6px; flex-wrap:wrap; }
+    .tab { padding:7px 18px; font-size:13px; font-weight:600; cursor:pointer; border:1.5px solid var(--border); border-radius:24px; background:var(--white); color:var(--text-mid); transition:all .15s; font-family:inherit; }
+    .tab:hover { border-color:var(--blue); color:var(--blue); background:var(--blue-light); }
+    .tab.active { background:var(--blue); color:white; border-color:var(--blue); }
+
+    .btn { display:inline-flex; align-items:center; gap:8px; padding:8px 22px; border-radius:24px; font-size:13px; font-weight:600; cursor:pointer; border:none; transition:all .15s; font-family:inherit; }
+    .btn-primary { background:var(--blue); color:white; box-shadow:0 1px 3px rgba(0,112,210,.3); }
+    .btn-primary:hover:not(:disabled) { background:var(--blue-dark); }
+    .btn-primary:disabled { opacity:.5; cursor:not-allowed; }
+    .btn-neutral { background:white; color:var(--text-mid); border:1px solid var(--border); }
+    .btn-neutral:hover { background:var(--bg); border-color:var(--blue); color:var(--blue); }
+    .btn-sm { padding:6px 16px; font-size:12px; }
+    .actions { display:flex; gap:10px; align-items:center; margin-top:16px; }
+
+    .spinner { width:15px; height:15px; border:2px solid rgba(255,255,255,.4); border-top-color:white; border-radius:50%; animation:spin .7s linear infinite; display:none; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    .status { font-size:13px; padding:10px 14px; border-radius:4px; margin-top:12px; display:none; border-left:3px solid; }
+    .status.error   { background:#fde8e8; color:var(--red);   border-color:var(--red); }
+    .status.info    { background:var(--blue-light); color:var(--blue); border-color:var(--blue); }
+    .status.success { background:var(--green-bg); color:var(--green); border-color:var(--green); }
+
+    .results-layout { display:grid; grid-template-columns:220px 1fr; gap:16px; align-items:start; }
+
+    .col-manager { background:var(--white); border-radius:var(--radius); border:1px solid var(--border); box-shadow:var(--shadow-sm); padding:16px; position:sticky; top:24px; max-height:calc(100vh - 48px); overflow-y:auto; }
+    .col-manager h3 { font-size:13px; font-weight:700; margin-bottom:12px; }
+    .col-section-label { font-size:10px; font-weight:700; color:var(--text-light); text-transform:uppercase; letter-spacing:.08em; margin:12px 0 6px; padding-bottom:4px; border-bottom:1px solid var(--border); }
+    .col-item { display:flex; align-items:center; gap:8px; padding:4px 0; }
+    .col-item input[type=checkbox] { accent-color:var(--blue); flex-shrink:0; width:14px; height:14px; }
+    .col-item label { font-size:12px; color:var(--text); cursor:pointer; line-height:1.3; }
+    .col-item label.preset { font-weight:600; }
+
+    .results-card { background:var(--white); border-radius:var(--radius); border:1px solid var(--border); box-shadow:var(--shadow-sm); }
+    .results-header { padding:16px 20px 0; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+    .results-header h2 { font-size:15px; font-weight:700; }
+    .results-meta { display:flex; align-items:center; gap:12px; }
+    .results-count { font-size:12px; color:var(--text-mid); background:var(--bg); padding:3px 10px; border-radius:12px; border:1px solid var(--border); }
+
+    .toolbar { padding:12px 20px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; border-bottom:1px solid var(--border); }
+    .search-wrap { position:relative; }
+    .search-wrap input { padding-left:30px; width:200px; }
+    .search-icon { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text-light); pointer-events:none; }
+    .filter-select { width:auto; min-width:150px; font-size:12px; padding:7px 28px 7px 10px; }
+
+    .table-wrap { overflow-x:auto; }
+    table { width:100%; border-collapse:collapse; font-size:12px; }
+    thead th { background:var(--bg); color:var(--text-mid); font-weight:700; text-align:left; padding:10px 14px; border-bottom:2px solid var(--border); white-space:nowrap; cursor:pointer; user-select:none; position:sticky; top:0; z-index:1; transition:background .1s; }
+    thead th:hover { background:#eaf0f8; color:var(--blue); }
+    thead th .sort-icon { margin-left:4px; font-size:10px; }
+    thead th .sort-icon::after { content:'⇅'; color:var(--text-light); }
+    thead th.sorted-asc .sort-icon::after  { content:'▲'; color:var(--blue); }
+    thead th.sorted-desc .sort-icon::after { content:'▼'; color:var(--blue); }
+    tbody tr { border-bottom:1px solid #f0f0f0; transition:background .1s; }
+    tbody tr:nth-child(even) { background:var(--row-alt); }
+    tbody tr:hover { background:var(--blue-light) !important; }
+    tbody td { padding:9px 14px; vertical-align:middle; }
+
+    .empty-state { text-align:center; padding:56px 24px; color:var(--text-light); }
+    .empty-state .empty-icon { font-size:32px; margin-bottom:12px; }
+
+    .badge { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; white-space:nowrap; }
+    .badge::before { content:''; width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+    .badge-green  { background:var(--green-bg);  color:var(--green);  } .badge-green::before  { background:var(--green); }
+    .badge-yellow { background:var(--yellow-bg); color:var(--yellow); } .badge-yellow::before { background:#f0a500; }
+    .badge-red    { background:var(--red-bg);    color:var(--red);    } .badge-red::before    { background:var(--red); }
+    .badge-grey   { background:var(--bg);        color:var(--text-light); } .badge-grey::before { background:var(--text-light); }
+
+    /* Capacity */
+    .capacity-summary {
+      background: var(--white); border-radius: var(--radius);
+      border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+      padding: 28px 32px; margin-bottom: 16px; max-width: 400px;
+    }
+    .capacity-summary h2 { font-size: 15px; font-weight: 700; margin-bottom: 20px; color: var(--text); }
+    .cap-line { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .cap-line:last-child { border-bottom: none; font-weight: 700; font-size: 15px; padding-top: 14px; margin-top: 4px; border-top: 2px solid var(--border); }
+    .cap-line-label { color: var(--text-mid); }
+    .cap-line-value { font-weight: 700; color: var(--text); font-size: 16px; }
+    .cap-line:last-child .cap-line-label { color: var(--text); }
+    .cap-line:last-child .cap-line-value { color: var(--blue); font-size: 20px; }
+
+    @media (max-width:800px) {
+      .setup-grid { grid-template-columns:1fr; }
+      .results-layout { grid-template-columns:1fr; }
+      .col-manager { position:static; }
+      main { padding:16px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <div class="header-logo">
+      <svg width="18" height="18" viewBox="0 0 40 40" fill="none"><path d="M20 8C13.373 8 8 13.373 8 20s5.373 12 12 12 12-5.373 12-12S26.627 8 20 8zm0 3a9 9 0 110 18 9 9 0 010-18zm0 3a6 6 0 100 12 6 6 0 000-12z" fill="white"/></svg>
+    </div>
+    <div>
+      <div style="font-size:17px;font-weight:700;line-height:1.2">Schedule Viewer</div>
+      <div style="font-size:11px;opacity:.65;margin-top:1px">Forma Cloud · Autodesk Platform Services</div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <div class="card">
+    <div class="section-label">Project &amp; Model</div>
+    <div class="setup-grid">
+      <div class="field-group">
+        <div class="field-label">Forma Cloud Project</div>
+        <select id="project-select" disabled><option value="">Loading projects…</option></select>
+      </div>
+      <div class="full model-section" id="model-section">
+        <div class="field-label">Revit Model</div>
+        <div class="model-list" id="model-list"></div>
+      </div>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="card">
+    <div class="section-label" style="margin-bottom:12px">Schedule Type</div>
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-type="furniture">Furniture</button>
+      <button class="tab" data-type="rooms">Rooms</button>
+      <button class="tab" data-type="floors">Floors</button>
+      <button class="tab" data-type="casework">Casework</button>
+      <button class="tab" data-type="finishes">Finishes</button>
+      <button class="tab" data-type="capacity">Capacity</button>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" id="run-btn" disabled>
+        <span class="spinner" id="spinner"></span>
+        <span id="btn-label">Run Schedule</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Capacity results -->
+  <div id="capacity-area" style="display:none">
+    <div class="capacity-summary" id="capacity-summary">
+      <h2>Capacity Summary</h2>
+      <div class="cap-line"><span class="cap-line-label">IW Capacity Seats</span><span class="cap-line-value" id="cap-iw">—</span></div>
+      <div class="cap-line"><span class="cap-line-label">Open Collab Capacity Seats</span><span class="cap-line-value" id="cap-collab">—</span></div>
+      <div class="cap-line"><span class="cap-line-label">Amenity Capacity Seats</span><span class="cap-line-value" id="cap-amenity">—</span></div>
+      <div class="cap-line"><span class="cap-line-label">Total</span><span class="cap-line-value" id="cap-total">—</span></div>
+    </div>
+    <div class="results-card">
+      <div class="results-header">
+        <h2>Breakdown</h2>
+        <div class="results-meta">
+          <span class="results-count" id="cap-count"></span>
+          <button class="btn btn-neutral btn-sm" id="cap-export-btn">&#8595; Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead id="cap-table-head"></thead>
+          <tbody id="cap-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="results-area" style="display:none">
+    <div class="results-layout">
+      <div class="col-manager">
+        <h3>Columns</h3>
+        <div id="col-list"></div>
+      </div>
+      <div class="results-card">
+        <div class="results-header">
+          <h2 id="results-title">Schedule</h2>
+          <div class="results-meta">
+            <span class="results-count" id="results-count"></span>
+            <button class="btn btn-neutral btn-sm" id="airtable-btn" style="display:none">&#10003; Compare with Airtable</button>
+            <button class="btn btn-neutral btn-sm" id="export-btn">&#8595; Export CSV</button>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="search-wrap">
+            <span class="search-icon">&#9906;</span>
+            <input type="text" id="search-input" placeholder="Search all columns…" />
+          </div>
+          <select class="filter-select" id="level-filter" style="display:none">
+            <option value="">All Levels</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead id="table-head"></thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  let currentUrn = null;
+  let currentProjectName = '';
+  let currentHubId = '';
+  let scheduleType = 'furniture';
+  let allData = [];
+  let activeColumns = [];
+  let presetColumns = [];
+  let availableColumns = [];
+  let sortState = { col: null, dir: 'asc' };
+  let modelData = [];
+
+  const projectSelect = document.getElementById('project-select');
+  const modelSection  = document.getElementById('model-section');
+  const modelList     = document.getElementById('model-list');
+  const statusEl      = document.getElementById('status');
+  const runBtn        = document.getElementById('run-btn');
+  const spinner       = document.getElementById('spinner');
+  const btnLabel      = document.getElementById('btn-label');
+  const resultsArea   = document.getElementById('results-area');
+  const colList       = document.getElementById('col-list');
+  const tableHead     = document.getElementById('table-head');
+  const tableBody     = document.getElementById('table-body');
+  const resultsCount  = document.getElementById('results-count');
+  const resultsTitle  = document.getElementById('results-title');
+  const searchInput   = document.getElementById('search-input');
+  const levelFilter   = document.getElementById('level-filter');
+  const exportBtn     = document.getElementById('export-btn');
+  const airtableBtn   = document.getElementById('airtable-btn');
+  const capacityArea  = document.getElementById('capacity-area');
+  const capExportBtn  = document.getElementById('cap-export-btn');
+  let airtableActive  = false;
+  let capBreakdown    = [];
+
+  const esc = v => String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const fmt = iso => iso ? new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+  function showStatus(msg, type='info') { statusEl.textContent=msg; statusEl.className=`status ${type}`; statusEl.style.display='block'; }
+  function hideStatus() { statusEl.style.display='none'; }
+  function setLoading(on) { runBtn.disabled=on; spinner.style.display=on?'inline-block':'none'; btnLabel.textContent=on?'Loading…':'Run Schedule'; }
+
+  async function loadProjects() {
+    try {
+      const res = await fetch('/api/projects');
+      if (!res.ok) throw new Error(await res.text());
+      const projects = await res.json();
+      projectSelect.innerHTML = '<option value="">— Select a project —</option>';
+      projects.forEach(p => {
+        const o = document.createElement('option');
+        o.value = p.id; o.dataset.hubId = p.hub_id; o.dataset.name = p.name;
+        o.textContent = p.name;
+        projectSelect.appendChild(o);
+      });
+      projectSelect.disabled = false;
+    } catch(e) {
+      projectSelect.innerHTML = '<option value="">Failed to load</option>';
+      showStatus('Error loading projects: ' + e.message, 'error');
+    }
+  }
+
+  projectSelect.addEventListener('change', async () => {
+    const pid = projectSelect.value;
+    currentUrn = null;
+    runBtn.disabled = true;
+    modelSection.style.display = 'none';
+    while (modelList.firstChild) modelList.removeChild(modelList.firstChild);
+    resultsArea.style.display = 'none';
+    hideStatus();
+    if (!pid) return;
+
+    const opt = projectSelect.selectedOptions[0];
+    currentHubId = opt.dataset.hubId;
+    currentProjectName = opt.dataset.name || '';
+
+    showStatus('Finding models, this may take a moment…', 'info');
+    try {
+      const res = await fetch('/api/projects/' + encodeURIComponent(pid) + '/models?hub_id=' + encodeURIComponent(currentHubId));
+      if (!res.ok) { const e=await res.json(); throw new Error(e.detail||res.statusText); }
+      modelData = await res.json();
+
+      modelData.forEach((m, i) => {
+        const lbl = document.createElement('label');
+        lbl.className = 'model-item' + (i===0?' selected':'');
+        lbl.id = 'mi-' + i;
+
+        const radio = document.createElement('input');
+        radio.type = 'radio'; radio.name = 'model';
+        radio.value = m.urn; radio.dataset.idx = i;
+        if (i === 0) radio.checked = true;
+
+        const info = document.createElement('div');
+
+        const nameEl = document.createElement('div');
+        nameEl.className = 'model-item-name';
+        nameEl.textContent = m.name;
+
+        const pathEl = document.createElement('div');
+        pathEl.className = 'model-item-path';
+        pathEl.textContent = m.path;
+
+        info.appendChild(nameEl);
+        info.appendChild(pathEl);
+
+        if (m.last_modified) {
+          const dateEl = document.createElement('div');
+          dateEl.className = 'model-item-date';
+          dateEl.textContent = 'Published ' + fmt(m.last_modified);
+          info.appendChild(dateEl);
+        }
+
+        lbl.appendChild(radio);
+        lbl.appendChild(info);
+        modelList.appendChild(lbl);
+
+        radio.addEventListener('change', () => selectModel(+radio.dataset.idx));
+      });
+
+      modelSection.style.display = 'block';
+      selectModel(0);
+      hideStatus();
+    } catch(e) {
+      showStatus('Could not find models: ' + e.message, 'error');
+    }
+  });
+
+  function selectModel(idx) {
+    modelList.querySelectorAll('.model-item').forEach(el => el.classList.remove('selected'));
+    const item = document.getElementById('mi-' + idx);
+    if (item) { item.classList.add('selected'); item.querySelector('input').checked = true; }
+    currentUrn = modelData[idx]?.urn || null;
+    runBtn.disabled = !currentUrn;
+  }
+
+  document.getElementById('tabs').addEventListener('click', e => {
+    const tab = e.target.closest('.tab');
+    if (!tab) return;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    scheduleType = tab.dataset.type;
+  });
+
+  runBtn.addEventListener('click', async () => {
+    if (!currentUrn) return;
+    setLoading(true);
+    resultsArea.style.display = 'none';
+    capacityArea.style.display = 'none';
+
+    if (scheduleType === 'capacity') {
+      try {
+        const res = await fetch('/api/capacity?urn=' + encodeURIComponent(currentUrn));
+        if (!res.ok) { const e=await res.json(); throw new Error(e.detail||res.statusText); }
+        const data = await res.json();
+        document.getElementById('cap-iw').textContent = data.iw;
+        document.getElementById('cap-collab').textContent = data.open_collab;
+        document.getElementById('cap-amenity').textContent = data.amenity;
+        document.getElementById('cap-total').textContent = data.total;
+        capBreakdown = data.breakdown || [];
+        renderCapTable(capBreakdown);
+        document.getElementById('cap-count').textContent = capBreakdown.length + ' row' + (capBreakdown.length !== 1 ? 's' : '');
+        capacityArea.style.display = 'block';
+      } catch(e) {
+        showStatus('Error: ' + e.message, 'error');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    const params = new URLSearchParams({ urn: currentUrn, project_name: currentProjectName, schedule_type: scheduleType });
+    try {
+      const res = await fetch('/api/schedule?' + params);
+      if (!res.ok) { const e=await res.json(); throw new Error(e.detail||res.statusText); }
+      const data = await res.json();
+      allData = data.items || [];
+      presetColumns = data.preset_columns || [];
+      availableColumns = data.available_columns || [];
+      activeColumns = [...presetColumns];
+      airtableActive = false;
+      airtableBtn.style.display = scheduleType === 'furniture' ? '' : 'none';
+      airtableBtn.style.background = '';
+      airtableBtn.style.color = '';
+      buildColumnManager();
+      buildLevelFilter(data.levels || []);
+      searchInput.value = ''; sortState = { col: null, dir: 'asc' };
+      resultsTitle.textContent = cap(scheduleType) + ' Schedule';
+      resultsArea.style.display = 'block';
+      renderTable();
+    } catch(e) {
+      showStatus('Error: ' + e.message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  function buildColumnManager() {
+    const extras = availableColumns.filter(c => !presetColumns.includes(c) && c !== '_validation_color');
+    while (colList.firstChild) colList.removeChild(colList.firstChild);
+
+    const addSection = (label) => {
+      const d = document.createElement('div');
+      d.className = 'col-section-label';
+      d.textContent = label;
+      colList.appendChild(d);
+    };
+
+    const addCol = (c, checked, isPreset) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'col-item';
+      const id = 'c-' + btoa(unescape(encodeURIComponent(c))).replace(/=/g,'');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = c; cb.id = id; cb.checked = checked;
+      cb.addEventListener('change', () => {
+        activeColumns = [...colList.querySelectorAll('input[type=checkbox]:checked')].map(x => x.value);
+        renderTable();
+      });
+      const lbl = document.createElement('label');
+      lbl.htmlFor = id; lbl.textContent = c;
+      if (isPreset) lbl.className = 'preset';
+      wrap.appendChild(cb); wrap.appendChild(lbl);
+      colList.appendChild(wrap);
+    };
+
+    addSection('Preset columns');
+    presetColumns.forEach(c => addCol(c, true, true));
+    addSection('Additional');
+    if (extras.length) {
+      extras.forEach(c => addCol(c, false, false));
+    } else {
+      const none = document.createElement('div');
+      none.style.cssText = 'font-size:11px;color:var(--text-light);padding:4px 0';
+      none.textContent = 'None available';
+      colList.appendChild(none);
+    }
+  }
+
+  function buildLevelFilter(levels) {
+    levelFilter.innerHTML = '<option value="">All Levels</option>';
+    levels.forEach(l => {
+      const o = document.createElement('option');
+      o.value = l; o.textContent = l;
+      levelFilter.appendChild(o);
+    });
+    levelFilter.style.display = levels.length ? '' : 'none';
+  }
+
+  levelFilter.addEventListener('change', renderTable);
+  searchInput.addEventListener('input', renderTable);
+
+  function renderTable() {
+    const query = searchInput.value.toLowerCase();
+    const level = levelFilter.value;
+    const cols = activeColumns.filter(c => c !== '_validation_color' && c !== '_levels');
+
+    let rows = allData.filter(r => {
+      if (level) {
+        const levelData = r['_levels'] || {};
+        if (!(level in levelData)) return false;
+      }
+      if (query) return Object.values(r).some(v => String(v).toLowerCase().includes(query));
+      return true;
+    }).map(r => {
+      if (level && r['_levels']) {
+        return { ...r, Count: String(r['_levels'][level] ?? 0) };
+      }
+      return r;
+    });
+
+    if (sortState.col) {
+      const col = sortState.col;
+      rows = [...rows].sort((a,b) => {
+        const av = String(a[col]??'').toLowerCase();
+        const bv = String(b[col]??'').toLowerCase();
+        return sortState.dir==='asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+      });
+    }
+
+    resultsCount.textContent = rows.length + ' row' + (rows.length!==1?'s':'');
+
+    const headRow = document.createElement('tr');
+    cols.forEach(c => {
+      const th = document.createElement('th');
+      th.dataset.col = c;
+      if (sortState.col === c) th.className = 'sorted-' + sortState.dir;
+      const span = document.createElement('span');
+      span.className = 'sort-icon';
+      th.textContent = c;
+      th.appendChild(span);
+      th.addEventListener('click', () => {
+        sortState.dir = sortState.col===c && sortState.dir==='asc' ? 'desc' : 'asc';
+        sortState.col = c;
+        renderTable();
+      });
+      headRow.appendChild(th);
+    });
+    tableHead.innerHTML = '';
+    tableHead.appendChild(headRow);
+
+    tableBody.innerHTML = '';
+    if (!rows.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = cols.length;
+      td.innerHTML = '<div class="empty-state"><div class="empty-icon">&#128269;</div><p>No results found.</p></div>';
+      tr.appendChild(td);
+      tableBody.appendChild(tr);
+      return;
+    }
+
+    rows.forEach(row => {
+      const tr = document.createElement('tr');
+      cols.forEach(col => {
+        const td = document.createElement('td');
+        if (col === 'Validation Status') {
+          const color = row['_validation_color'] || 'grey';
+          const badge = document.createElement('span');
+          badge.className = 'badge badge-' + color;
+          badge.textContent = row[col] ?? '';
+          td.appendChild(badge);
+        } else {
+          td.textContent = row[col] ?? '';
+        }
+        tr.appendChild(td);
+      });
+      tableBody.appendChild(tr);
+    });
+  }
+
+  airtableBtn.addEventListener('click', () => {
+    airtableActive = !airtableActive;
+    if (airtableActive) {
+      if (!activeColumns.includes('Validation Status')) activeColumns.push('Validation Status');
+      airtableBtn.style.background = 'var(--blue)';
+      airtableBtn.style.color = 'white';
+      airtableBtn.style.borderColor = 'var(--blue)';
+      // Check the validation checkbox in column manager if present
+      const cb = colList.querySelector('input[value="Validation Status"]');
+      if (cb) cb.checked = true;
+    } else {
+      activeColumns = activeColumns.filter(c => c !== 'Validation Status');
+      airtableBtn.style.background = '';
+      airtableBtn.style.color = '';
+      airtableBtn.style.borderColor = '';
+      const cb = colList.querySelector('input[value="Validation Status"]');
+      if (cb) cb.checked = false;
+    }
+    renderTable();
+  });
+
+  exportBtn.addEventListener('click', () => {
+    const cols = activeColumns.filter(c => c !== '_validation_color');
+    const level = levelFilter.value;
+    const query = searchInput.value.toLowerCase();
+    const rows = allData.filter(r => {
+      if (level && r['Level'] !== level) return false;
+      if (query) return Object.values(r).some(v => String(v).toLowerCase().includes(query));
+      return true;
+    });
+    const csv = [cols, ...rows.map(r => cols.map(c => '"' + String(r[c]??'').replace(/"/g,'""') + '"'))]
+      .map(r => r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download = scheduleType + '_schedule.csv';
+    a.click();
+  });
+
+  const CAP_COLS = ['Room Name', 'Raw Seats', 'Multiplier', 'Weighted Seats', 'Category', 'Matched Architecture Name', 'Match Score'];
+
+  function renderCapTable(rows) {
+    const head = document.getElementById('cap-table-head');
+    const body = document.getElementById('cap-table-body');
+    head.innerHTML = '';
+    body.innerHTML = '';
+    const headRow = document.createElement('tr');
+    CAP_COLS.forEach(c => {
+      const th = document.createElement('th');
+      th.textContent = c;
+      headRow.appendChild(th);
+    });
+    head.appendChild(headRow);
+
+    if (!rows.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = CAP_COLS.length;
+      td.innerHTML = '<div class="empty-state"><div class="empty-icon">&#128269;</div><p>No matched rooms found. Check that furniture elements have a Room Name parameter.</p></div>';
+      tr.appendChild(td);
+      body.appendChild(tr);
+      return;
+    }
+
+    rows.forEach(row => {
+      const tr = document.createElement('tr');
+      CAP_COLS.forEach(col => {
+        const td = document.createElement('td');
+        if (col === 'Category') {
+          const colors = { 'IW': 'green', 'Open Collab': 'yellow', 'Amenity': 'grey', 'Other': 'grey' };
+          const badge = document.createElement('span');
+          badge.className = 'badge badge-' + (colors[row[col]] || 'grey');
+          badge.textContent = row[col] || '';
+          td.appendChild(badge);
+        } else {
+          td.textContent = row[col] ?? '';
+        }
+        tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+  }
+
+  capExportBtn.addEventListener('click', () => {
+    const csv = [CAP_COLS, ...capBreakdown.map(r => CAP_COLS.map(c => '"' + String(r[c]??'').replace(/"/g,'""') + '"'))]
+      .map(r => r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+    a.download = 'capacity_breakdown.csv';
+    a.click();
+  });
+
+  loadProjects();
+</script>
+</body>
+</html>
