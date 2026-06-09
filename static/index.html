@@ -191,8 +191,13 @@
         <select id="project-select" disabled><option value="">Loading projects…</option></select>
       </div>
       <div class="full model-section" id="model-section">
-        <div class="field-label">Revit Model</div>
+        <div class="field-label" id="model-label">Revit Model</div>
         <div class="model-list" id="model-list"></div>
+      </div>
+      <!-- Second model selector for Capacity tab only -->
+      <div class="full model-section" id="interior-model-section" style="display:none">
+        <div class="field-label">Interior / Architecture Model</div>
+        <div class="model-list" id="interior-model-list"></div>
       </div>
     </div>
     <div class="status" id="status"></div>
@@ -291,8 +296,13 @@
   let modelData = [];
 
   const projectSelect = document.getElementById('project-select');
-  const modelSection  = document.getElementById('model-section');
-  const modelList     = document.getElementById('model-list');
+  const modelSection         = document.getElementById('model-section');
+  const modelList            = document.getElementById('model-list');
+  const interiorModelSection = document.getElementById('interior-model-section');
+  const interiorModelList    = document.getElementById('interior-model-list');
+  const modelLabel           = document.getElementById('model-label');
+  let interiorUrn            = null;
+  let interiorModelData      = [];
   const statusEl      = document.getElementById('status');
   const runBtn        = document.getElementById('run-btn');
   const spinner       = document.getElementById('spinner');
@@ -399,6 +409,10 @@
       modelSection.style.display = 'block';
       selectModel(0);
       hideStatus();
+      if (scheduleType === 'capacity') {
+        interiorModelSection.style.display = 'block';
+        loadInteriorModels(pid);
+      }
     } catch(e) {
       showStatus('Could not find models: ' + e.message, 'error');
     }
@@ -409,7 +423,63 @@
     const item = document.getElementById('mi-' + idx);
     if (item) { item.classList.add('selected'); item.querySelector('input').checked = true; }
     currentUrn = modelData[idx]?.urn || null;
-    runBtn.disabled = !currentUrn;
+    runBtn.disabled = !currentUrn || (scheduleType === 'capacity' && !interiorUrn);
+  }
+
+  function selectInteriorModel(idx) {
+    interiorModelList.querySelectorAll('.model-item').forEach(el => el.classList.remove('selected'));
+    const item = document.getElementById('imi-' + idx);
+    if (item) { item.classList.add('selected'); item.querySelector('input').checked = true; }
+    interiorUrn = interiorModelData[idx]?.urn || null;
+    runBtn.disabled = !currentUrn || !interiorUrn;
+  }
+
+  async function loadInteriorModels(pid) {
+    interiorModelList.innerHTML = '';
+    interiorUrn = null;
+    const opt = projectSelect.selectedOptions[0];
+    const hid = opt?.dataset.hubId || currentHubId;
+    try {
+      const res = await fetch('/api/projects/' + encodeURIComponent(pid) + '/models?hub_id=' + encodeURIComponent(hid));
+      if (!res.ok) return;
+      interiorModelData = await res.json();
+      // Filter for arch/interior models
+      const archModels = interiorModelData.filter(m => {
+        const s = m.name.toLowerCase().replace('.rvt','');
+        return /(?<![a-z])(ar|arch|ia|int|interior)(?![a-z])/.test(s) &&
+               !/(?<![a-z])(base|ec|existing|furn|furniture)(?![a-z])/.test(s);
+      });
+      const display = archModels.length > 0 ? archModels : interiorModelData;
+
+      display.forEach((m, i) => {
+        const lbl = document.createElement('label');
+        lbl.className = 'model-item' + (i===0?' selected':'');
+        lbl.id = 'imi-' + i;
+        const radio = document.createElement('input');
+        radio.type = 'radio'; radio.name = 'interior-model';
+        radio.value = m.urn; radio.dataset.idx = i;
+        if (i === 0) { radio.checked = true; interiorUrn = m.urn; }
+        const info = document.createElement('div');
+        const nameEl = document.createElement('div');
+        nameEl.className = 'model-item-name'; nameEl.textContent = m.name;
+        const pathEl = document.createElement('div');
+        pathEl.className = 'model-item-path'; pathEl.textContent = m.path;
+        info.appendChild(nameEl); info.appendChild(pathEl);
+        if (m.last_modified) {
+          const dateEl = document.createElement('div');
+          dateEl.className = 'model-item-date';
+          dateEl.textContent = 'Published ' + fmt(m.last_modified);
+          info.appendChild(dateEl);
+        }
+        lbl.appendChild(radio); lbl.appendChild(info);
+        interiorModelList.appendChild(lbl);
+        radio.addEventListener('change', () => selectInteriorModel(+radio.dataset.idx));
+      });
+
+      runBtn.disabled = !currentUrn || !interiorUrn;
+    } catch(e) {
+      console.error('Failed to load interior models:', e);
+    }
   }
 
   document.getElementById('tabs').addEventListener('click', e => {
@@ -418,6 +488,20 @@
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     scheduleType = tab.dataset.type;
+
+    if (scheduleType === 'capacity') {
+      modelLabel.textContent = 'Furniture Model';
+      if (modelData.length > 0) {
+        interiorModelSection.style.display = 'block';
+        // Reload interior model list if project is selected
+        if (projectSelect.value && interiorModelList.childElementCount === 0) {
+          loadInteriorModels(projectSelect.value);
+        }
+      }
+    } else {
+      modelLabel.textContent = 'Revit Model';
+      interiorModelSection.style.display = 'none';
+    }
   });
 
   runBtn.addEventListener('click', async () => {
@@ -427,8 +511,14 @@
     capacityArea.style.display = 'none';
 
     if (scheduleType === 'capacity') {
+      if (!interiorUrn) {
+        showStatus('Please select an Interior/Architecture model.', 'error');
+        setLoading(false);
+        return;
+      }
       try {
-        const res = await fetch('/api/capacity?urn=' + encodeURIComponent(currentUrn));
+        const params = new URLSearchParams({ furniture_urn: currentUrn, interior_urn: interiorUrn });
+        const res = await fetch('/api/capacity?' + params);
         if (!res.ok) { const e=await res.json(); throw new Error(e.detail||res.statusText); }
         const data = await res.json();
         document.getElementById('cap-iw').textContent = data.iw;

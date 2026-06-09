@@ -8,6 +8,7 @@ from auth import get_token
 import aps_client as aps
 import airtable_client as at
 import capacity_engine as cap_eng
+import spatial_join as sj
 
 app = FastAPI()
 
@@ -15,6 +16,7 @@ HUB_ID = "b.8a643169-4b2b-4c79-bff4-289208a76b2e"
 
 FURNITURE_KEYWORDS = {"furn", "furniture", "fn", "sym", "symb", "ff&e"}
 ARCH_KEYWORDS = {" ar ", "_ar_", "-ar-", " a ", "_a_", "-a-", " ia ", "_ia_", "-ia-", "arch"}
+ARCH_MODEL_KEYWORDS = {"ar", "arch", "ia", "int"}
 
 SCHEDULE_CATEGORIES = {
     "furniture":  ["Furniture", "Furniture Systems"],
@@ -44,6 +46,14 @@ def is_relevant_model(name: str) -> bool:
     if re.search(r'(?<![a-z])(ar|arch|ia)(?![a-z])', stem):
         return True
     return False
+
+
+def is_arch_model(name: str) -> bool:
+    import re
+    stem = name.lower().replace(".rvt", "")
+    if re.search(r'(?<![a-z])(base|ec|existing)(?![a-z])', stem):
+        return False
+    return bool(re.search(r'(?<![a-z])(ar|arch|ia|int|interior)(?![a-z])', stem))
 
 
 def get_guid(views: list) -> str:
@@ -153,9 +163,24 @@ def get_project_models(project_id: str, hub_id: str = Query(default=HUB_ID)):
     try:
         token = get_token()
         files = aps.find_rvt_files(token, hub_id, project_id)
-        matches = [f for f in files if is_relevant_model(f["name"])]
+        if not files:
+            raise HTTPException(status_code=404, detail="No .rvt files found in this project")
+        files.sort(key=lambda x: x.get("last_modified", ""), reverse=True)
+        return files
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/projects/{project_id}/arch-models")
+def get_arch_models(project_id: str, hub_id: str = Query(default=HUB_ID)):
+    try:
+        token = get_token()
+        files = aps.find_rvt_files(token, hub_id, project_id)
+        matches = [f for f in files if is_arch_model(f["name"])]
         if not matches:
-            raise HTTPException(status_code=404, detail="No furniture or architecture .rvt files found in this project")
+            raise HTTPException(status_code=404, detail="No architecture .rvt files found (looking for AR, ARCH, IA, INT in filename)")
         matches.sort(key=lambda x: x.get("last_modified", ""), reverse=True)
         return matches
     except HTTPException:
@@ -309,6 +334,18 @@ def get_schedule(
 
         # Determine level filter from request (passed via selected_columns hack or derived)
         # We'll emit one row per type with total count, plus level breakdown in metadata
+        # Check if any element in this model has SFDC_Tag Number populated
+        has_sfdc_tag = any(
+            flat_props(grp["param_obj"]).get("SFDC_Tag Number", "") or flat_props(grp["param_obj"]).get("SFDC_TAG NUMBER", "")
+            for grp in groups.values() if grp["param_obj"]
+        )
+        tag_param = "SFDC_Tag Number" if has_sfdc_tag else "Type Mark"
+        print(f"[SCHEDULE] Tag source: {tag_param} (SFDC_Tag Number found: {has_sfdc_tag})")
+
+        # Update preset columns label if falling back to Type Mark
+        if not has_sfdc_tag and schedule_type == "furniture":
+            cols = [("Type Mark" if c == "SFDC_Tag Number" else c) for c in cols]
+
         rows = []
         for type_id, grp in groups.items():
             param_obj = grp["param_obj"]
@@ -316,9 +353,7 @@ def get_schedule(
                 continue
 
             fp = flat_props(param_obj)
-            # Family = tree node name (stable, always populated)
             family_name = grp["type_node_name"] or param_obj.get("name", "")
-            # Type = Type Name param (the actual Revit type name)
             type_name = fp.get("Type Name", "").strip() or family_name
 
             row = {}
@@ -333,10 +368,11 @@ def get_schedule(
                     row[col] = str(grp["total"])
                 elif col == "Level":
                     row[col] = ", ".join(sorted(grp["levels"].keys()))
+                elif col in ("SFDC_Tag Number", "Type Mark"):
+                    row[col] = fp.get("SFDC_Tag Number", "") or fp.get("SFDC_TAG NUMBER", "") or fp.get("Type Mark", "")
                 else:
                     row[col] = fp.get(col, "")
 
-            # Store per-level data for frontend filtering
             row["_levels"] = dict(grp["levels"])
 
             if schedule_type == "furniture":
@@ -354,11 +390,17 @@ def get_schedule(
             all_levels.update(grp["levels"].keys())
         levels = sorted(l for l in all_levels if l)
 
+        effective_presets = (
+            [("Type Mark" if c == "SFDC_Tag Number" else c) for c in PRESET_COLUMNS[schedule_type]]
+            if schedule_type == "furniture" and not has_sfdc_tag
+            else PRESET_COLUMNS[schedule_type]
+        )
+
         return {
             "items": rows,
             "levels": levels,
             "available_columns": available_columns,
-            "preset_columns": PRESET_COLUMNS[schedule_type],
+            "preset_columns": effective_presets,
         }
 
     except HTTPException:
@@ -370,60 +412,26 @@ def get_schedule(
 
 
 @app.get("/api/capacity")
-def get_capacity(urn: str = Query(...)):
+def get_capacity(
+    furniture_urn: str = Query(...),
+    interior_urn: str = Query(...),
+):
     try:
         token = get_token()
+        print(f"[CAPACITY] Starting spatial join: furniture={furniture_urn[:60]}... interior={interior_urn[:60]}...")
 
-        views = aps.get_model_views(token, urn)
-        if not views:
-            raise HTTPException(status_code=404, detail="No views found in model")
-        guid = get_guid(views)
+        # Spatial join: get seat counts per room name
+        room_seats = sj.get_room_seats(token, furniture_urn, interior_urn)
+        print(f"[CAPACITY] Room seats: {dict(list(room_seats.items())[:10])}")
 
-        tree_data = aps.get_object_tree(token, urn, guid)
-        top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
+        if not room_seats:
+            return {"iw": 0, "open_collab": 0, "amenity": 0, "total": 0, "breakdown": []}
 
-        # Collect Furniture and Furniture Systems type node names
-        target_cats = ["Furniture", "Furniture Systems"]
-        type_node_name_set = set()
-        for cat_node in top_objects:
-            if cat_node["name"] in target_cats:
-                for type_node in cat_node.get("objects", []):
-                    type_node_name_set.add(type_node["name"])
-
-        props_data = aps.get_properties(token, urn, guid)
-        collection = props_data.get("data", {}).get("collection", [])
-
-        import re as _re
-        def base_name(name: str) -> str:
-            return _re.sub(r'\s*\[\d+\]$', '', name).strip()
-
-        # Build list of items with room name and seat count
-        furniture_items = []
-        seen = set()
-        for obj in collection:
-            bn = base_name(obj.get("name", ""))
-            if bn not in type_node_name_set:
-                continue
-            fp = flat_props(obj)
-            room_name = fp.get("Room Name", "") or fp.get("Space Name", "") or fp.get("Room", "")
-            raw_seats = fp.get("SFDC_Seat Count", "") or fp.get("SFDC_Seat Count", "0")
-            try:
-                raw_seats_int = int(float(raw_seats))
-            except (ValueError, TypeError):
-                raw_seats_int = 0
-
-            if not room_name or raw_seats_int == 0:
-                continue
-
-            key = (bn, room_name)
-            if key in seen:
-                continue
-            seen.add(key)
-
-            furniture_items.append({
-                "room_name": room_name,
-                "raw_seats": raw_seats_int,
-            })
+        # Convert to furniture_items format for capacity engine
+        furniture_items = [
+            {"room_name": room_name, "raw_seats": seats}
+            for room_name, seats in room_seats.items()
+        ]
 
         result = cap_eng.calculate_capacity(furniture_items)
         return result
