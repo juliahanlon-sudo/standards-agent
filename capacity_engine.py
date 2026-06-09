@@ -35,7 +35,7 @@ RAW_DIRECTORY = [
     # L3 - Hospitality
     ("Barista Bar",               ["Barista Bar", "Customer - Barista Bar"],                           0,    "L3 - Hospitality"),
     ("Cafe",                      ["Cafe", "Ohana - Cafe", "Customer - Cafe", "SIC - Cafe"],           0,    "L3 - Hospitality"),
-    ("Cafe Seating",              ["Cafe Seating", "Ohana - Cafe Seating", "Customer - Cafe Seating"], 0.5,  "L3 - Hospitality"),
+    ("Cafe Seating",              ["Cafe Seating", "Ohana - Cafe Seating", "Customer - Cafe Seating"], 0.5, "L3 - Hospitality"),
     ("Customer Center",           ["Customer Center"],                                                  0,    "L3 - Hospitality"),
     ("Customer Collaboration",    ["Customer Collaboration", "AI - Customer Studio"],                  0,    "L3 - Hospitality"),
     ("Customer Executive Lounge", ["Customer Executive Lounge"],                                       0,    "L3 - Hospitality"),
@@ -74,23 +74,25 @@ RAW_DIRECTORY = [
     ("Phone Room (Micro)",        ["Phone Room (Micro)", "Micro Phone Room"],                          0,    "L3 - Enclosed Collaboration"),
     ("Phone Room (AV)",           ["Phone Room (AV)"],                                                  0,    "L3 - Enclosed Collaboration"),
     # L3 - Individual Work
-    ("Desk: Standard",            ["Open Office"],                                                      1.0,  "L3 - Individual Work"),
+    ("Desk: Standard",            ["Open Office", "OPEN OFFICE", "Workstation Area", "Open Plan"],     1.0,  "L3 - Individual Work"),
     ("Library",                   ["Library"],                                                          1.0,  "L3 - Individual Work"),
     ("Private Office",            ["Private Office"],                                                   1.0,  "L3 - Individual Work"),
     ("Touchdown Seat",            ["Open Office", "Focus Nook"],                                       1.0,  "L3 - Individual Work"),
     ("Work Room",                 ["Work Room", "Puppyforce", "Design Studio"],                        1.0,  "L3 - Individual Work"),
     # L3 - Open Collaboration
-    ("Booth",                     ["Open Collaboration", "Banquette"],                                  0.5,  "L3 - Open Collaboration"),
-    ("Cafe Collaboration Table",  ["Open Collaboration"],                                               0.5,  "L3 - Open Collaboration"),
-    ("Collaboration Space",       ["Open Collaboration", "AI - Collaboration Cafe Area", "AI - Collaboration Zone",
+    ("Open Collaboration",        ["Open Collaboration", "OPEN COLLABORATION"],                        0.5,  "L3 - Open Collaboration"),
+    ("Booth",                     ["Banquette"],                                                        0.5,  "L3 - Open Collaboration"),
+    ("Cafe Collaboration Table",  ["Cafe Collaboration Table"],                                         0.5,  "L3 - Open Collaboration"),
+    ("Collaboration Space",       ["AI - Collaboration Cafe Area", "AI - Collaboration Zone",
                                    "AI - Collaborative Work Area", "AI - Expert Zone", "AI - Exploration Zone",
                                    "AI - Work Zone", "Open Air Meeting", "Open Huddle", "Pilot Seat",
                                    "Social Lounge Extension", "Whiteboarding"],                        0.5,  "L3 - Open Collaboration"),
-    ("Community Table",           ["Open Collaboration", "Library Table"],                              0.5,  "L3 - Open Collaboration"),
-    ("Project Bay",               ["Open Collaboration"],                                               0.5,  "L3 - Open Collaboration"),
-    ("Soft Seating",              ["Open Collaboration"],                                               0,    "L3 - Open Collaboration"),
+    ("Community Table",           ["Community Table", "Library Table"],                                 0.5,  "L3 - Open Collaboration"),
+    ("Project Bay",               ["Project Bay"],                                                      0.5,  "L3 - Open Collaboration"),
+    ("Soft Seating",              ["Soft Seating"],                                                    0,    "L3 - Open Collaboration"),
     # L3 - Workspace Specialty
     ("Catering Pantry",           ["Catering Pantry", "SIC - Pantry"],                                 0,    "L3 - Workspace Specialty"),
+    ("Cubbies",                   ["Cubbies", "Cubby Storage", "Cubby"],                               0,    "L3 - Workspace Specialty"),
     ("Flex Room",                 ["Flex Room", "Flex Room - Living", "SIC - Flex Room"],              0,    "L3 - Workspace Specialty"),
     ("Mindfulness",               ["Mindfulness"],                                                      0,    "L3 - Workspace Specialty"),
     ("Multifaith Room",           ["Multifaith Room"],                                                  0,    "L3 - Workspace Specialty"),
@@ -98,7 +100,7 @@ RAW_DIRECTORY = [
     ("Reception",                 ["Reception", "SIC - Reception"],                                    0,    "L3 - Workspace Specialty"),
     ("Reception Lounge",          ["Reception Lounge"],                                                 0,    "L3 - Workspace Specialty"),
     ("Reflection Room",           ["Reflection Room"],                                                  0,    "L3 - Workspace Specialty"),
-    ("Social Lounge",             ["Open Collaboration", "Ohana - Social Lounge",
+    ("Social Lounge",             ["Social Lounge", "Ohana - Social Lounge",
                                    "Barista Bar Social Lounge", "Customer - Social Lounge"],           0,    "L3 - Workspace Specialty"),
     ("Treadmill Desk",            ["Treadmill Desk"],                                                   0,    "L3 - Workspace Specialty"),
     ("Water Point",               ["Water Point", "Tea Point"],                                        0,    "L3 - Workspace Specialty"),
@@ -114,6 +116,12 @@ def get_category(serraview_name: str, l3_section: str, multiplier: float) -> str
         return "IW"
     if l3_section == "L3 - Open Collaboration":
         return "Open Collab"
+    if l3_section == "L3 - Enclosed Collaboration":
+        return "Enclosed Collab"
+    if l3_section == "L3 - Workspace Specialty":
+        return "Workspace Specialty"
+    if l3_section == "L3 - Hospitality":
+        return "Hospitality"
     if multiplier == 0.75 or serraview_name == "Conference Room (XL)":
         return "Amenity"
     return "Other"
@@ -124,13 +132,19 @@ def match_room(room_name: str):
     if not room_name or not room_name.strip():
         return None
 
+    name_lower = room_name.strip().lower()
     best_score = 0
     best_entry = None
     best_variant = None
 
     for serraview_name, variants, multiplier, l3_section in RAW_DIRECTORY:
         for variant in variants:
-            score = fuzz.WRatio(room_name.strip(), variant.strip())
+            variant_lower = variant.strip().lower()
+            # Exact case-insensitive match scores 100
+            if name_lower == variant_lower:
+                score = 100
+            else:
+                score = fuzz.WRatio(room_name.strip(), variant.strip())
             if score > best_score:
                 best_score = score
                 best_entry = (serraview_name, multiplier, l3_section)
@@ -149,26 +163,53 @@ def match_room(room_name: str):
     return None
 
 
+CATEGORY_ORDER = ["IW", "Open Collab", "Enclosed Collab", "Workspace Specialty", "Hospitality", "Building Specialty", "Other"]
+
+
 def calculate_capacity(furniture_items: list[dict]) -> dict:
     """
-    Takes a list of furniture items with keys: room_name, raw_seats.
-    Returns capacity summary and breakdown rows.
+    Groups furniture items by room, applies space type multipliers,
+    returns aggregated breakdown with one row per room.
     """
+    from collections import defaultdict
+
     iw_seats = 0.0
     open_collab_seats = 0.0
     amenity_seats = 0.0
-    breakdown = []
+    total_desks = 0
+    cubby_total = 0
+
+    # Group by (room_name, level) — one breakdown row per room per level
+    room_groups = defaultdict(lambda: {
+        "raw_seats": 0, "weighted": 0.0, "cat": None,
+        "serraview_name": "", "matched_variant": "", "multiplier": 0,
+    })
 
     for item in furniture_items:
         room_name = item.get("room_name", "")
         raw_seats = float(item.get("raw_seats", 0) or 0)
+        level = item.get("level", "")
+        desk_count = int(item.get("desk_count", 0) or 0)
+        total_desks += desk_count
 
         match = match_room(room_name)
         if not match:
             continue
 
+        if match["serraview_name"] == "Cubbies":
+            cubby_total += int(raw_seats)
+            continue
+
         weighted = raw_seats * match["multiplier"]
         cat = match["category"]
+        key = (room_name, level)
+
+        room_groups[key]["raw_seats"] += int(raw_seats)
+        room_groups[key]["weighted"] += weighted
+        room_groups[key]["cat"] = cat
+        room_groups[key]["serraview_name"] = match["serraview_name"]
+        room_groups[key]["matched_variant"] = match["matched_variant"]
+        room_groups[key]["multiplier"] = match["multiplier"]
 
         if cat == "IW":
             iw_seats += weighted
@@ -177,22 +218,34 @@ def calculate_capacity(furniture_items: list[dict]) -> dict:
         elif cat == "Amenity":
             amenity_seats += weighted
 
+    breakdown = []
+    for (room_name, level), grp in room_groups.items():
+        cat = grp["cat"] or "Other"
+        cat_order = CATEGORY_ORDER.index(cat) if cat in CATEGORY_ORDER else 99
         breakdown.append({
             "Room Name": room_name,
-            "Raw Seats": str(int(raw_seats)),
-            "Multiplier": str(match["multiplier"]),
-            "Weighted Seats": str(round(weighted, 1)),
+            "Level": level,
+            "Raw Seats": str(grp["raw_seats"]),
+            "Multiplier": str(grp["multiplier"]),
+            "Weighted Seats": str(round(grp["weighted"], 1)),
             "Category": cat,
-            "Matched Architecture Name": match["matched_variant"],
-            "Match Score": str(match["score"]),
+            "Matched Architecture Name": grp["matched_variant"],
+            "_cat_order": cat_order,
         })
 
-    breakdown.sort(key=lambda x: -float(x["Weighted Seats"]))
+    breakdown.sort(key=lambda x: (x.get("Level", ""), x["_cat_order"], x["Room Name"]))
+    for r in breakdown:
+        r.pop("_cat_order", None)
+
+    levels = sorted(set(r["Level"] for r in breakdown if r.get("Level")))
 
     return {
         "iw": round(iw_seats),
         "open_collab": round(open_collab_seats),
         "amenity": round(amenity_seats),
         "total": round(iw_seats + open_collab_seats + amenity_seats),
+        "total_desks": total_desks,
+        "total_cubbies": cubby_total,
         "breakdown": breakdown,
+        "levels": levels,
     }

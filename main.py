@@ -420,18 +420,12 @@ def get_capacity(
         token = get_token()
         print(f"[CAPACITY] Starting spatial join: furniture={furniture_urn[:60]}... interior={interior_urn[:60]}...")
 
-        # Spatial join: get seat counts per room name
-        room_seats = sj.get_room_seats(token, furniture_urn, interior_urn)
-        print(f"[CAPACITY] Room seats: {dict(list(room_seats.items())[:10])}")
+        # Spatial join: returns list of {room_name, raw_seats, level}
+        furniture_items = sj.get_room_seats(token, furniture_urn, interior_urn)
+        print(f"[CAPACITY] Furniture items assigned to rooms: {len(furniture_items)}")
 
-        if not room_seats:
-            return {"iw": 0, "open_collab": 0, "amenity": 0, "total": 0, "breakdown": []}
-
-        # Convert to furniture_items format for capacity engine
-        furniture_items = [
-            {"room_name": room_name, "raw_seats": seats}
-            for room_name, seats in room_seats.items()
-        ]
+        if not furniture_items:
+            return {"iw": 0, "open_collab": 0, "amenity": 0, "total": 0, "breakdown": [], "levels": []}
 
         result = cap_eng.calculate_capacity(furniture_items)
         return result

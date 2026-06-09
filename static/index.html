@@ -190,14 +190,23 @@
         <div class="field-label">Forma Cloud Project</div>
         <select id="project-select" disabled><option value="">Loading projects…</option></select>
       </div>
+      <!-- Single model layout (non-capacity tabs) -->
       <div class="full model-section" id="model-section">
         <div class="field-label" id="model-label">Revit Model</div>
         <div class="model-list" id="model-list"></div>
       </div>
-      <!-- Second model selector for Capacity tab only -->
-      <div class="full model-section" id="interior-model-section" style="display:none">
-        <div class="field-label">Interior / Architecture Model</div>
-        <div class="model-list" id="interior-model-list"></div>
+      <!-- Side-by-side model selectors for Capacity tab -->
+      <div class="full" id="capacity-model-section" style="display:none; margin-top:16px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+          <div>
+            <div class="field-label">Furniture Model</div>
+            <div class="model-list" id="model-list-cap"></div>
+          </div>
+          <div>
+            <div class="field-label">Interior / Architecture Model</div>
+            <div class="model-list" id="interior-model-list"></div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="status" id="status"></div>
@@ -223,12 +232,19 @@
 
   <!-- Capacity results -->
   <div id="capacity-area" style="display:none">
-    <div class="capacity-summary" id="capacity-summary">
-      <h2>Capacity Summary</h2>
-      <div class="cap-line"><span class="cap-line-label">IW Capacity Seats</span><span class="cap-line-value" id="cap-iw">—</span></div>
-      <div class="cap-line"><span class="cap-line-label">Open Collab Capacity Seats</span><span class="cap-line-value" id="cap-collab">—</span></div>
-      <div class="cap-line"><span class="cap-line-label">Amenity Capacity Seats</span><span class="cap-line-value" id="cap-amenity">—</span></div>
-      <div class="cap-line"><span class="cap-line-label">Total</span><span class="cap-line-value" id="cap-total">—</span></div>
+    <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start;">
+      <div class="capacity-summary" id="capacity-summary">
+        <h2>Capacity Summary</h2>
+        <div class="cap-line"><span class="cap-line-label">IW Capacity Seats</span><span class="cap-line-value" id="cap-iw">—</span></div>
+        <div class="cap-line"><span class="cap-line-label">Open Collab Capacity Seats</span><span class="cap-line-value" id="cap-collab">—</span></div>
+        <div class="cap-line"><span class="cap-line-label">Amenity Capacity Seats</span><span class="cap-line-value" id="cap-amenity">—</span></div>
+        <div class="cap-line"><span class="cap-line-label">Total</span><span class="cap-line-value" id="cap-total">—</span></div>
+      </div>
+      <div class="capacity-summary" id="cap-extras" style="display:none">
+        <h2>Additional Counts</h2>
+        <div class="cap-line" id="cap-desks-line" style="display:none"><span class="cap-line-label">Total Desks (Workstations)</span><span class="cap-line-value" id="cap-desks">—</span></div>
+        <div class="cap-line" id="cap-cubbies-line" style="display:none"><span class="cap-line-label">Total Cubbies</span><span class="cap-line-value" id="cap-cubbies">—</span></div>
+      </div>
     </div>
     <div class="results-card">
       <div class="results-header">
@@ -237,6 +253,12 @@
           <span class="results-count" id="cap-count"></span>
           <button class="btn btn-neutral btn-sm" id="cap-export-btn">&#8595; Export CSV</button>
         </div>
+      </div>
+      <div class="toolbar" id="cap-toolbar" style="display:none">
+        <label style="margin:0;text-transform:none;font-size:13px;color:var(--text-mid)">Filter by Level:</label>
+        <select class="filter-select" id="cap-level-filter">
+          <option value="">All Levels</option>
+        </select>
       </div>
       <div class="table-wrap">
         <table>
@@ -296,13 +318,14 @@
   let modelData = [];
 
   const projectSelect = document.getElementById('project-select');
-  const modelSection         = document.getElementById('model-section');
-  const modelList            = document.getElementById('model-list');
-  const interiorModelSection = document.getElementById('interior-model-section');
-  const interiorModelList    = document.getElementById('interior-model-list');
-  const modelLabel           = document.getElementById('model-label');
-  let interiorUrn            = null;
-  let interiorModelData      = [];
+  const modelSection          = document.getElementById('model-section');
+  const modelList             = document.getElementById('model-list');
+  const capacityModelSection  = document.getElementById('capacity-model-section');
+  const modelListCap          = document.getElementById('model-list-cap');
+  const interiorModelList     = document.getElementById('interior-model-list');
+  const modelLabel            = document.getElementById('model-label');
+  let interiorUrn             = null;
+  let interiorModelData       = [];
   const statusEl      = document.getElementById('status');
   const runBtn        = document.getElementById('run-btn');
   const spinner       = document.getElementById('spinner');
@@ -318,9 +341,11 @@
   const exportBtn     = document.getElementById('export-btn');
   const airtableBtn   = document.getElementById('airtable-btn');
   const capacityArea  = document.getElementById('capacity-area');
-  const capExportBtn  = document.getElementById('cap-export-btn');
-  let airtableActive  = false;
-  let capBreakdown    = [];
+  const capExportBtn   = document.getElementById('cap-export-btn');
+  const capLevelFilter = document.getElementById('cap-level-filter');
+  const capToolbar     = document.getElementById('cap-toolbar');
+  let airtableActive   = false;
+  let capBreakdown     = [];
 
   const esc = v => String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const fmt = iso => iso ? new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}) : '';
@@ -406,17 +431,50 @@
         radio.addEventListener('change', () => selectModel(+radio.dataset.idx));
       });
 
-      modelSection.style.display = 'block';
-      selectModel(0);
-      hideStatus();
       if (scheduleType === 'capacity') {
-        interiorModelSection.style.display = 'block';
+        modelSection.style.display = 'none';
+        capacityModelSection.style.display = 'block';
+        populateCapFurnList(modelData);
         loadInteriorModels(pid);
+      } else {
+        modelSection.style.display = 'block';
+        selectModel(0);
       }
+      hideStatus();
     } catch(e) {
       showStatus('Could not find models: ' + e.message, 'error');
     }
   });
+
+  function populateCapFurnList(models) {
+    while (modelListCap.firstChild) modelListCap.removeChild(modelListCap.firstChild);
+    models.forEach((m, i) => {
+      const lbl = document.createElement('label');
+      lbl.className = 'model-item' + (i===0?' selected':'');
+      lbl.id = 'mfcap-' + i;
+      const radio = document.createElement('input');
+      radio.type = 'radio'; radio.name = 'model'; // same group as main list
+      radio.value = m.urn; radio.dataset.idx = i;
+      if (i === 0) { radio.checked = true; currentUrn = m.urn; }
+      const info = document.createElement('div');
+      const nameEl = document.createElement('div'); nameEl.className='model-item-name'; nameEl.textContent=m.name;
+      const pathEl = document.createElement('div'); pathEl.className='model-item-path'; pathEl.textContent=m.path;
+      info.appendChild(nameEl); info.appendChild(pathEl);
+      if (m.last_modified) {
+        const d = document.createElement('div'); d.className='model-item-date';
+        d.textContent='Published '+fmt(m.last_modified); info.appendChild(d);
+      }
+      lbl.appendChild(radio); lbl.appendChild(info);
+      modelListCap.appendChild(lbl);
+      radio.addEventListener('change', () => {
+        modelListCap.querySelectorAll('.model-item').forEach(el=>el.classList.remove('selected'));
+        document.getElementById('mfcap-'+i).classList.add('selected');
+        currentUrn = m.urn;
+        runBtn.disabled = !currentUrn || !interiorUrn;
+      });
+    });
+    runBtn.disabled = !currentUrn || !interiorUrn;
+  }
 
   function selectModel(idx) {
     modelList.querySelectorAll('.model-item').forEach(el => el.classList.remove('selected'));
@@ -490,17 +548,15 @@
     scheduleType = tab.dataset.type;
 
     if (scheduleType === 'capacity') {
-      modelLabel.textContent = 'Furniture Model';
-      if (modelData.length > 0) {
-        interiorModelSection.style.display = 'block';
-        // Reload interior model list if project is selected
-        if (projectSelect.value && interiorModelList.childElementCount === 0) {
-          loadInteriorModels(projectSelect.value);
-        }
+      modelSection.style.display = 'none';
+      if (projectSelect.value && modelData.length > 0) {
+        capacityModelSection.style.display = 'block';
+        populateCapFurnList(modelData);
+        loadInteriorModels(projectSelect.value);
       }
     } else {
-      modelLabel.textContent = 'Revit Model';
-      interiorModelSection.style.display = 'none';
+      capacityModelSection.style.display = 'none';
+      if (modelData.length > 0) modelSection.style.display = 'block';
     }
   });
 
@@ -525,7 +581,24 @@
         document.getElementById('cap-collab').textContent = data.open_collab;
         document.getElementById('cap-amenity').textContent = data.amenity;
         document.getElementById('cap-total').textContent = data.total;
+        const desksLine = document.getElementById('cap-desks-line');
+        const cubbiesLine = document.getElementById('cap-cubbies-line');
+        const capExtras = document.getElementById('cap-extras');
+        let hasExtras = false;
+        if (data.total_desks) {
+          document.getElementById('cap-desks').textContent = data.total_desks;
+          desksLine.style.display = ''; hasExtras = true;
+        } else { desksLine.style.display = 'none'; }
+        if (data.total_cubbies) {
+          document.getElementById('cap-cubbies').textContent = data.total_cubbies;
+          cubbiesLine.style.display = ''; hasExtras = true;
+        } else { cubbiesLine.style.display = 'none'; }
+        capExtras.style.display = hasExtras ? '' : 'none';
         capBreakdown = data.breakdown || [];
+        const capLevels = data.levels || [];
+        capLevelFilter.innerHTML = '<option value="">All Levels</option>' +
+          capLevels.map(l => '<option value="' + l + '">' + l + '</option>').join('');
+        capToolbar.style.display = capLevels.length ? 'flex' : 'none';
         renderCapTable(capBreakdown);
         document.getElementById('cap-count').textContent = capBreakdown.length + ' row' + (capBreakdown.length !== 1 ? 's' : '');
         capacityArea.style.display = 'block';
@@ -734,7 +807,7 @@
     a.click();
   });
 
-  const CAP_COLS = ['Room Name', 'Raw Seats', 'Multiplier', 'Weighted Seats', 'Category', 'Matched Architecture Name', 'Match Score'];
+  const CAP_COLS = ['Room Name', 'Level', 'Raw Seats', 'Multiplier', 'Weighted Seats', 'Category', 'Matched Architecture Name', 'Match Score'];
 
   function renderCapTable(rows) {
     const head = document.getElementById('cap-table-head');
@@ -778,8 +851,17 @@
     });
   }
 
+  capLevelFilter.addEventListener('change', () => {
+    const level = capLevelFilter.value;
+    const filtered = level ? capBreakdown.filter(r => r['Level'] === level) : capBreakdown;
+    renderCapTable(filtered);
+    document.getElementById('cap-count').textContent = filtered.length + ' row' + (filtered.length !== 1 ? 's' : '');
+  });
+
   capExportBtn.addEventListener('click', () => {
-    const csv = [CAP_COLS, ...capBreakdown.map(r => CAP_COLS.map(c => '"' + String(r[c]??'').replace(/"/g,'""') + '"'))]
+    const level = capLevelFilter.value;
+    const rows = level ? capBreakdown.filter(r => r['Level'] === level) : capBreakdown;
+    const csv = [CAP_COLS, ...rows.map(r => CAP_COLS.map(c => '"' + String(r[c]??'').replace(/"/g,'""') + '"'))]
       .map(r => r.join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
