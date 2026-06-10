@@ -93,7 +93,7 @@ RAW_DIRECTORY = [
     # L3 - Workspace Specialty
     ("Catering Pantry",           ["Catering Pantry", "SIC - Pantry"],                                 0,    "L3 - Workspace Specialty"),
     ("Cubbies",                   ["Cubbies", "Cubby Storage", "Cubby"],                               0,    "L3 - Workspace Specialty"),
-    ("Flex Room",                 ["Flex Room", "Flex Room - Living", "SIC - Flex Room"],              0,    "L3 - Workspace Specialty"),
+    ("Flex Room",                 ["Flex Room", "Flex Room - Living", "Flex Room - Library", "SIC - Flex Room"], 0, "L3 - Workspace Specialty"),
     ("Mindfulness",               ["Mindfulness"],                                                      0,    "L3 - Workspace Specialty"),
     ("Multifaith Room",           ["Multifaith Room"],                                                  0,    "L3 - Workspace Specialty"),
     ("Parent's Room",             ["Parent's Room"],                                                    0,    "L3 - Workspace Specialty"),
@@ -122,9 +122,13 @@ def get_category(serraview_name: str, l3_section: str, multiplier: float) -> str
         return "Workspace Specialty"
     if l3_section == "L3 - Hospitality":
         return "Hospitality"
-    if multiplier == 0.75 or serraview_name == "Conference Room (XL)":
+    if l3_section == "L3 - Building Specialty":
+        return "Building Specialty"
+    if l3_section in ("L3 - M&E", "L2 - Support", "L1 - Core"):
+        return "Support"
+    if multiplier == 0.75:
         return "Amenity"
-    return "Other"
+    return "Unmatched"
 
 
 def match_room(room_name: str):
@@ -163,7 +167,7 @@ def match_room(room_name: str):
     return None
 
 
-CATEGORY_ORDER = ["IW", "Open Collab", "Enclosed Collab", "Workspace Specialty", "Hospitality", "Building Specialty", "Other"]
+CATEGORY_ORDER = ["IW", "Open Collab", "Enclosed Collab", "Workspace Specialty", "Hospitality", "Building Specialty", "Support", "Unmatched"]
 
 
 def calculate_capacity(furniture_items: list[dict]) -> dict:
@@ -178,6 +182,7 @@ def calculate_capacity(furniture_items: list[dict]) -> dict:
     amenity_seats = 0.0
     total_desks = 0
     cubby_total = 0
+    seen_cubby_keys = set()  # deduplicate cubby instances
 
     # Group by (room_name, level) — one breakdown row per room per level
     room_groups = defaultdict(lambda: {

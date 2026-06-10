@@ -29,7 +29,7 @@ SCHEDULE_CATEGORIES = {
 PRESET_COLUMNS = {
     "furniture": ["SFDC_Tag Number", "Frame Tag", "SFDC_Seat Count", "Family", "Type", "Count", "Manufacturer"],
     "rooms":     ["Number", "Name", "Area", "Level", "Occupancy"],
-    "floors":    ["Level", "Area", "Structural Material", "Thickness"],
+    "floors":    ["Type", "Type Mark", "Level", "Area"],
     "casework":  ["Family & Type", "Count", "Manufacturer", "Finish 1"],
     "finishes":  ["Number", "Name", "Floor Finish", "Wall Finish", "Base Finish", "Ceiling Finish"],
 }
@@ -56,7 +56,26 @@ def is_arch_model(name: str) -> bool:
     return bool(re.search(r'(?<![a-z])(ar|arch|ia|int|interior)(?![a-z])', stem))
 
 
-def get_guid(views: list) -> str:
+def deduplicate_by_name(files: list) -> list:
+    """Keep only the most recently modified file for each unique filename."""
+    by_name = {}
+    for f in files:
+        name = f.get("name", "")
+        if not name:
+            continue
+        last_modified = f.get("last_modified", "")
+        if name not in by_name or last_modified > by_name[name].get("last_modified", ""):
+            by_name[name] = f
+    return list(by_name.values())
+
+
+def get_guid(views: list, prefer_name_hint: str = "") -> str:
+    # If a name hint is given, prefer views matching that hint
+    if prefer_name_hint:
+        hint_lower = prefer_name_hint.lower()
+        for v in views:
+            if v.get("role") == "3d" and hint_lower in v.get("name", "").lower():
+                return v["guid"]
     for v in views:
         if v.get("isMasterView"):
             return v["guid"]
@@ -64,6 +83,31 @@ def get_guid(views: list) -> str:
         if v.get("role") == "3d":
             return v["guid"]
     return views[0]["guid"] if views else None
+
+
+def get_best_guid_for_schedule(token, urn: str, views: list, target_categories: list) -> str:
+    """Find the 3D view that has the most instances for the target categories."""
+    import aps_client as aps_mod
+    best_guid = get_guid(views)
+    best_count = 0
+
+    for v in views:
+        if v.get("role") != "3d":
+            continue
+        try:
+            tree = aps_mod.get_object_tree(token, urn, v["guid"])
+            top = tree.get("data", {}).get("objects", [{}])[0].get("objects", [])
+            count = sum(
+                sum(len(t.get("objects", [])) for t in cat.get("objects", []))
+                for cat in top if cat["name"] in target_categories
+            )
+            if count > best_count:
+                best_count = count
+                best_guid = v["guid"]
+        except Exception:
+            continue
+
+    return best_guid
 
 
 def flat_props(obj: dict) -> dict:
@@ -165,6 +209,7 @@ def get_project_models(project_id: str, hub_id: str = Query(default=HUB_ID)):
         files = aps.find_rvt_files(token, hub_id, project_id)
         if not files:
             raise HTTPException(status_code=404, detail="No .rvt files found in this project")
+        files = deduplicate_by_name(files)
         files.sort(key=lambda x: x.get("last_modified", ""), reverse=True)
         return files
     except HTTPException:
@@ -181,6 +226,7 @@ def get_arch_models(project_id: str, hub_id: str = Query(default=HUB_ID)):
         matches = [f for f in files if is_arch_model(f["name"])]
         if not matches:
             raise HTTPException(status_code=404, detail="No architecture .rvt files found (looking for AR, ARCH, IA, INT in filename)")
+        matches = deduplicate_by_name(matches)
         matches.sort(key=lambda x: x.get("last_modified", ""), reverse=True)
         return matches
     except HTTPException:
@@ -207,12 +253,31 @@ def get_schedule(
         views = aps.get_model_views(token, urn)
         if not views:
             raise HTTPException(status_code=404, detail="No views found in model")
-        guid = get_guid(views)
 
+        # Use master view first; if target categories are empty, search all 3D views
+        guid = get_guid(views)
         tree_data = aps.get_object_tree(token, urn, guid)
         top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
-
         cat_nodes = get_tree_nodes_by_category(top_objects, target_categories)
+
+        # Count instances in master view — if very few, search other views for a richer one
+        master_instance_count = sum(
+            sum(len(t.get("objects", [])) for t in cat.get("objects", []))
+            for cat in cat_nodes.values()
+        ) if cat_nodes else 0
+
+        # For floors/finishes, always search for the best view since master views are often sparse
+        # For other types, only fall back if master view has very few instances
+        sparse_threshold = 2 if schedule_type in ("floors", "finishes", "casework") else 5
+        if not cat_nodes or master_instance_count < sparse_threshold:
+            # Master view has no/sparse data — search all 3D views for the best one
+            better_guid = get_best_guid_for_schedule(token, urn, views, target_categories)
+            if better_guid != guid:
+                guid = better_guid
+                tree_data = aps.get_object_tree(token, urn, guid)
+                top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
+                cat_nodes = get_tree_nodes_by_category(top_objects, target_categories)
+
         if not cat_nodes:
             return {"items": [], "levels": [], "available_columns": [], "preset_columns": PRESET_COLUMNS[schedule_type]}
 
@@ -300,13 +365,13 @@ def get_schedule(
         # Build a set of type node names from the tree for category matching
         type_node_names = {tn["objectid"]: tn["name"] for tn in all_type_nodes}
 
+        # Also include all instance objectids directly from the tree
+        # This handles cases where instance names differ from type node names (e.g. Floors)
+        all_category_ids = all_instance_ids | set(type_node_names.keys())
+
         # Scan the full properties collection for all objects in target categories
-        # The tree misses nested assembly components — scanning the collection gets them all
-        # We identify category membership by checking if the object's name or Workset
-        # matches any of the type node names from the tree
         type_node_name_set = set(type_node_names.values())
 
-        # Build a lookup: strip the [ElementId] suffix from object names to get the base type name
         import re as _re
         def base_name(name: str) -> str:
             return _re.sub(r'\s*\[\d+\]$', '', name).strip()
@@ -320,17 +385,38 @@ def get_schedule(
         for obj in collection:
             obj_name = obj.get("name", "")
             bn = base_name(obj_name)
-            if bn not in type_node_name_set:
+            # Match by name OR by being directly in the tree
+            if bn not in type_node_name_set and obj.get("objectid") not in all_category_ids:
                 continue
             fp_obj = flat_props(obj)
             type_name = fp_obj.get("Type Name", "").strip() or bn
             level = fp_obj.get("Level") or fp_obj.get("Schedule Level") or ""
-            key = (bn, type_name)
-            groups[key]["total"] += 1
-            groups[key]["levels"][level] += 1
-            groups[key]["type_node_name"] = bn
-            if groups[key]["param_obj"] is None:
-                groups[key]["param_obj"] = obj
+
+            # For floors: skip elements with no level AND no area (type/category nodes)
+            if schedule_type in ("floors", "finishes"):
+                area_val = fp_obj.get("Area", "")
+                if not level and not area_val:
+                    continue
+                # Group by type+level and accumulate area
+                key = (type_name, level)
+                try:
+                    area_num = float(str(area_val).split()[0]) if area_val else 0.0
+                except (ValueError, IndexError):
+                    area_num = 0.0
+                groups[key]["total"] += 1
+                groups[key]["levels"][level] += 1
+                groups[key]["type_node_name"] = bn
+                groups[key]["area_sum"] = groups[key].get("area_sum", 0.0) + area_num
+                groups[key]["area_unit"] = str(area_val).split()[-1] if area_val and len(str(area_val).split()) > 1 else ""
+                if groups[key]["param_obj"] is None:
+                    groups[key]["param_obj"] = obj
+            else:
+                key = (bn, type_name)
+                groups[key]["total"] += 1
+                groups[key]["levels"][level] += 1
+                groups[key]["type_node_name"] = bn
+                if groups[key]["param_obj"] is None:
+                    groups[key]["param_obj"] = obj
 
         # Determine level filter from request (passed via selected_columns hack or derived)
         # We'll emit one row per type with total count, plus level breakdown in metadata
@@ -356,6 +442,16 @@ def get_schedule(
             family_name = grp["type_node_name"] or param_obj.get("name", "")
             type_name = fp.get("Type Name", "").strip() or family_name
 
+            # For floors: reconstruct area from summed value
+            if schedule_type in ("floors", "finishes"):
+                level_val = ", ".join(sorted(k for k in grp["levels"].keys() if k))
+                area_sum = grp.get("area_sum", 0.0)
+                area_unit = grp.get("area_unit", "ft^2")
+                area_str = f"{area_sum:.3f} {area_unit}".strip() if area_sum else ""
+            else:
+                level_val = None
+                area_str = None
+
             row = {}
             for col in cols:
                 if col == "Family & Type":
@@ -367,7 +463,9 @@ def get_schedule(
                 elif col == "Count":
                     row[col] = str(grp["total"])
                 elif col == "Level":
-                    row[col] = ", ".join(sorted(grp["levels"].keys()))
+                    row[col] = level_val if level_val is not None else ", ".join(sorted(grp["levels"].keys()))
+                elif col == "Area" and schedule_type in ("floors", "finishes"):
+                    row[col] = area_str or fp.get("Area", "")
                 elif col in ("SFDC_Tag Number", "Type Mark"):
                     row[col] = fp.get("SFDC_Tag Number", "") or fp.get("SFDC_TAG NUMBER", "") or fp.get("Type Mark", "")
                 else:
@@ -384,7 +482,10 @@ def get_schedule(
 
             rows.append(row)
 
-        rows.sort(key=lambda x: (x.get("Family", ""), x.get("Type", "")))
+        if schedule_type in ("floors", "finishes"):
+            rows.sort(key=lambda x: (x.get("Level", ""), x.get("Type Mark", "") or x.get("Type", "")))
+        else:
+            rows.sort(key=lambda x: (x.get("Family", ""), x.get("Type", "")))
         all_levels = set()
         for grp in groups.values():
             all_levels.update(grp["levels"].keys())

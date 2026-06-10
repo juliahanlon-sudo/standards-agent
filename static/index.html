@@ -152,7 +152,7 @@
       padding: 28px 32px; margin-bottom: 16px; max-width: 400px;
     }
     .capacity-summary h2 { font-size: 15px; font-weight: 700; margin-bottom: 20px; color: var(--text); }
-    .cap-line { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+    .cap-line { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; gap: 24px; }
     .cap-line:last-child { border-bottom: none; font-weight: 700; font-size: 15px; padding-top: 14px; margin-top: 4px; border-top: 2px solid var(--border); }
     .cap-line-label { color: var(--text-mid); }
     .cap-line-value { font-weight: 700; color: var(--text); font-size: 16px; }
@@ -438,7 +438,7 @@
         loadInteriorModels(pid);
       } else {
         modelSection.style.display = 'block';
-        selectModel(0);
+        autoSelectBestModel(scheduleType);
       }
       hideStatus();
     } catch(e) {
@@ -540,6 +540,21 @@
     }
   }
 
+  function autoSelectBestModel(type) {
+    if (!modelData.length) return;
+    const archKw = /ar[-_]|arch[-_]|interior|int[-_]|ia[-_]/i;
+    const furnKw  = /furn|fn[-_]|sym[-_]furn|ff.e/i;
+    let bestIdx = 0;
+    if (type === 'furniture') {
+      const i = modelData.findIndex(m => furnKw.test(m.name));
+      if (i >= 0) bestIdx = i;
+    } else if (type !== 'capacity') {
+      const i = modelData.findIndex(m => archKw.test(m.name) && !furnKw.test(m.name));
+      if (i >= 0) bestIdx = i;
+    }
+    selectModel(bestIdx);
+  }
+
   document.getElementById('tabs').addEventListener('click', e => {
     const tab = e.target.closest('.tab');
     if (!tab) return;
@@ -556,7 +571,10 @@
       }
     } else {
       capacityModelSection.style.display = 'none';
-      if (modelData.length > 0) modelSection.style.display = 'block';
+      if (modelData.length > 0) {
+        modelSection.style.display = 'block';
+        autoSelectBestModel(scheduleType);
+      }
     }
   });
 

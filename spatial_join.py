@@ -119,8 +119,8 @@ def get_room_seats(token, furniture_urn, interior_urn):
                 ).fetchall()
             }
 
-        # child_entity → desk_count via parent lookup
-        child_desk_count = {}
+        # child_entity → parent_entity_id (for deduplication)
+        child_to_parent_id = {}
         if parent_attr and parent_desk_count:
             for child_id, parent_id in conn_f.execute(
                 f"SELECT e.entity_id, CAST(v.value AS INTEGER) FROM _objects_eav e "
@@ -128,7 +128,7 @@ def get_room_seats(token, furniture_urn, interior_urn):
                 f"WHERE e.attribute_id={parent_attr[0]}"
             ).fetchall():
                 if parent_id in parent_desk_count:
-                    child_desk_count[child_id] = parent_desk_count[parent_id]
+                    child_to_parent_id[child_id] = parent_id
 
     finally:
         conn_f.close()
@@ -139,8 +139,6 @@ def get_room_seats(token, furniture_urn, interior_urn):
         for inst in instance_to_type
         if instance_to_type[inst] in type_seats
     }
-    # Also include parent entities themselves for desk count
-    all_desk_count = {**parent_desk_count, **child_desk_count}
 
     # ── Interior: room bboxes ──────────────────────────────────────────────
     _, int_frag_urn = _get_svf_frag_urn(token, interior_urn, "New Construction")
@@ -160,10 +158,14 @@ def get_room_seats(token, furniture_urn, interior_urn):
             ).fetchall()
         }
         name_attr = conn_i.execute(
-            "SELECT id FROM _objects_attr WHERE name='Name' LIMIT 1"
+            "SELECT id FROM _objects_attr WHERE name='Name' AND category='Identity Data' LIMIT 1"
         ).fetchone()
+        if not name_attr:
+            name_attr = conn_i.execute(
+                "SELECT id FROM _objects_attr WHERE name='Name' LIMIT 1"
+            ).fetchone()
         num_attr = conn_i.execute(
-            "SELECT id FROM _objects_attr WHERE name='Number' LIMIT 1"
+            "SELECT id FROM _objects_attr WHERE name='Number' AND category='Identity Data' LIMIT 1"
         ).fetchone()
         if not name_attr:
             return []
@@ -218,27 +220,34 @@ def get_room_seats(token, furniture_urn, interior_urn):
 
     # ── Spatial join ───────────────────────────────────────────────────────
     # Returns list of {room_name, raw_seats, desk_count, level}
-    # For desk_count: only count one fragment per parent to avoid double-counting
-    counted_parents = set()
+    # Deduplicate: each furniture instance can have multiple fragments (geometry pieces)
+    # Only count each instance (dbid) once
+    counted_parent_ids = set()
+    counted_instance_dbids = set()
     assignments = []
     for f in furn_frags:
         has_seats = f.dbid in instance_seats
-        has_desks = f.dbid in all_desk_count
+        has_desks = f.dbid in child_to_parent_id or f.dbid in parent_desk_count
         if (not has_seats and not has_desks) or not f.transform:
+            continue
+        # Skip duplicate instances (already counted via another fragment)
+        if has_seats and f.dbid in counted_instance_dbids:
             continue
         tx, ty, tz = svf.get_translation(f.transform)
         if math.isnan(tx) or math.isnan(ty) or math.isnan(tz):
             continue
         seats = instance_seats.get(f.dbid, 0)
-        # For desk count: if this fragment is a child, use parent desk count once
-        # To avoid double-counting sub-elements of the same workstation
+
+        # Desk count: deduplicate by parent ID
         desks = 0
-        if f.dbid in all_desk_count:
-            # This is a parent or direct desk entity
-            parent_key = f.dbid
-            if parent_key not in counted_parents:
-                desks = all_desk_count[f.dbid]
-                counted_parents.add(parent_key)
+        if f.dbid in child_to_parent_id:
+            parent_id = child_to_parent_id[f.dbid]
+            if parent_id not in counted_parent_ids:
+                desks = parent_desk_count[parent_id]
+                counted_parent_ids.add(parent_id)
+        elif f.dbid in parent_desk_count and f.dbid not in counted_parent_ids:
+            desks = parent_desk_count[f.dbid]
+            counted_parent_ids.add(f.dbid)
 
         if seats == 0 and desks == 0:
             continue
@@ -252,7 +261,10 @@ def get_room_seats(token, furniture_urn, interior_urn):
                     "raw_seats": seats,
                     "desk_count": desks,
                     "level": level,
+                    "dbid": f.dbid,
                 })
+                if has_seats:
+                    counted_instance_dbids.add(f.dbid)
                 break
 
     return assignments
