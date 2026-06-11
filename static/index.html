@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Schedule Viewer</title>
+  <title>Project Data Pull</title>
   <link href="https://fonts.googleapis.com/css2?family=Salesforce+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -175,7 +176,7 @@
       <svg width="18" height="18" viewBox="0 0 40 40" fill="none"><path d="M20 8C13.373 8 8 13.373 8 20s5.373 12 12 12 12-5.373 12-12S26.627 8 20 8zm0 3a9 9 0 110 18 9 9 0 010-18zm0 3a6 6 0 100 12 6 6 0 000-12z" fill="white"/></svg>
     </div>
     <div>
-      <div style="font-size:17px;font-weight:700;line-height:1.2">Schedule Viewer</div>
+      <div style="font-size:17px;font-weight:700;line-height:1.2">Project Data Pull</div>
       <div style="font-size:11px;opacity:.65;margin-top:1px">Forma Cloud · Autodesk Platform Services</div>
     </div>
   </div>
@@ -183,7 +184,7 @@
 
 <main>
 
-  <div class="card">
+  <div class="card" id="project-model-card">
     <div class="section-label">Project &amp; Model</div>
     <div class="setup-grid">
       <div class="field-group">
@@ -226,6 +227,29 @@
       <button class="btn btn-primary" id="run-btn" disabled>
         <span class="spinner" id="spinner"></span>
         <span id="btn-label">Run Schedule</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Benchmarking -->
+  <div class="card" style="border-left:3px solid var(--blue);">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:280px">
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">Multi-Site Benchmarking</div>
+        <div style="font-size:13px;color:var(--text-mid);line-height:1.5;margin-bottom:12px">
+          Compare data across multiple Salesforce sites simultaneously. Select a data type and any number of projects to see a side-by-side breakdown — with totals and percentage mix per site. Currently supports flooring; furniture, rooms, and capacity comparisons coming soon.
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label style="font-size:12px;font-weight:700;color:var(--text-mid);text-transform:uppercase;letter-spacing:.04em">Compare:</label>
+          <select id="bm-schedule-type" style="width:auto;min-width:160px;font-size:13px;padding:6px 28px 6px 10px">
+            <option value="floors">Flooring Types</option>
+            <option value="furniture" disabled>Furniture (coming soon)</option>
+            <option value="rooms" disabled>Rooms (coming soon)</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-secondary" id="open-benchmark-btn" style="white-space:nowrap;flex-shrink:0;align-self:flex-start">
+        &#9654; Open Benchmarking
       </button>
     </div>
   </div>
@@ -298,6 +322,52 @@
             <thead id="table-head"></thead>
             <tbody id="table-body"></tbody>
           </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Benchmark ── -->
+  <div id="benchmark-area" style="display:none">
+    <div class="card">
+      <div class="section-label" style="margin-bottom:12px">Select Models to Compare</div>
+      <p style="font-size:12px;color:var(--text-mid);margin-bottom:12px">
+        Search for projects, expand to see their models, and check any combination — including multiple models from the same project.
+      </p>
+      <div class="field-group" style="margin-bottom:12px">
+        <input type="text" id="bm-search" placeholder="Search projects…" style="max-width:320px" />
+      </div>
+      <div id="bm-project-list" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg);">
+        <div style="color:var(--text-light);font-size:13px;padding:6px">Loading projects…</div>
+      </div>
+      <div style="margin-top:10px;font-size:12px;color:var(--text-mid)" id="bm-selected-count">0 models selected</div>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn btn-primary" id="bm-run-btn" disabled>
+          <span class="spinner" id="bm-spinner"></span>
+          <span id="bm-btn-label">Run Benchmark</span>
+        </button>
+        <button class="btn btn-neutral btn-sm" id="bm-export-btn" style="display:none">&#8595; Export CSV</button>
+      </div>
+      <div class="status" id="bm-status"></div>
+    </div>
+
+    <div id="bm-results" style="display:none">
+      <div class="results-card" style="margin-bottom:20px">
+        <div class="results-header" style="padding:16px 20px 0">
+          <h2 id="bm-results-title">Floor Type Mix</h2>
+        </div>
+        <div class="table-wrap">
+          <table id="bm-table"><thead id="bm-thead"></thead><tbody id="bm-tbody"></tbody></table>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+        <div class="card">
+          <h2 style="font-size:14px;font-weight:700;margin-bottom:16px">Area by Type Group (ft²)</h2>
+          <canvas id="bm-bar-chart" height="300"></canvas>
+        </div>
+        <div class="card">
+          <h2 style="font-size:14px;font-weight:700;margin-bottom:16px">% Mix per Model</h2>
+          <div id="bm-pie-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px"></div>
         </div>
       </div>
     </div>
@@ -562,18 +632,23 @@
     tab.classList.add('active');
     scheduleType = tab.dataset.type;
 
-    if (scheduleType === 'capacity') {
-      modelSection.style.display = 'none';
-      if (projectSelect.value && modelData.length > 0) {
-        capacityModelSection.style.display = 'block';
-        populateCapFurnList(modelData);
-        loadInteriorModels(projectSelect.value);
-      }
+    if (false) {
+      // benchmark is now a standalone section, not a tab
     } else {
-      capacityModelSection.style.display = 'none';
-      if (modelData.length > 0) {
-        modelSection.style.display = 'block';
-        autoSelectBestModel(scheduleType);
+      document.getElementById('project-model-card').style.display = '';
+      if (scheduleType === 'capacity') {
+        modelSection.style.display = 'none';
+        if (projectSelect.value && modelData.length > 0) {
+          capacityModelSection.style.display = 'block';
+          populateCapFurnList(modelData);
+          loadInteriorModels(projectSelect.value);
+        }
+      } else {
+        capacityModelSection.style.display = 'none';
+        if (modelData.length > 0) {
+          modelSection.style.display = 'block';
+          autoSelectBestModel(scheduleType);
+        }
       }
     }
   });
@@ -790,15 +865,20 @@
   airtableBtn.addEventListener('click', () => {
     airtableActive = !airtableActive;
     if (airtableActive) {
+      // Add Frame Tag and Validation Status when Airtable is active
+      if (!activeColumns.includes('Frame Tag')) {
+        const idx = activeColumns.indexOf('SFDC_Tag Number');
+        if (idx >= 0) activeColumns.splice(idx + 1, 0, 'Frame Tag');
+        else activeColumns.unshift('Frame Tag');
+      }
       if (!activeColumns.includes('Validation Status')) activeColumns.push('Validation Status');
       airtableBtn.style.background = 'var(--blue)';
       airtableBtn.style.color = 'white';
       airtableBtn.style.borderColor = 'var(--blue)';
-      // Check the validation checkbox in column manager if present
       const cb = colList.querySelector('input[value="Validation Status"]');
       if (cb) cb.checked = true;
     } else {
-      activeColumns = activeColumns.filter(c => c !== 'Validation Status');
+      activeColumns = activeColumns.filter(c => c !== 'Validation Status' && c !== 'Frame Tag');
       airtableBtn.style.background = '';
       airtableBtn.style.color = '';
       airtableBtn.style.borderColor = '';
@@ -885,6 +965,312 @@
     a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
     a.download = 'capacity_breakdown.csv';
     a.click();
+  });
+
+  // ── Benchmark ──────────────────────────────────────────────────────────
+  const bmArea        = document.getElementById('benchmark-area');
+  const openBmBtn     = document.getElementById('open-benchmark-btn');
+
+  openBmBtn.addEventListener('click', () => {
+    const isOpen = bmArea.style.display !== 'none';
+    bmArea.style.display = isOpen ? 'none' : 'block';
+    openBmBtn.textContent = isOpen ? '▶ Open Benchmarking' : '▼ Close Benchmarking';
+    if (!isOpen) loadBmProjects();
+  });
+
+  const bmSearch      = document.getElementById('bm-search');
+  const bmProjectList = document.getElementById('bm-project-list');
+  const bmRunBtn      = document.getElementById('bm-run-btn');
+  const bmExportBtn   = document.getElementById('bm-export-btn');
+  const bmSpinner     = document.getElementById('bm-spinner');
+  const bmBtnLabel    = document.getElementById('bm-btn-label');
+  const bmStatus      = document.getElementById('bm-status');
+  const bmResults     = document.getElementById('bm-results');
+  const bmSelectedCount = document.getElementById('bm-selected-count');
+
+  // selectedModels: Map of urn → {label, hubId}
+  let selectedModels = new Map();
+  let allProjectsList = [];
+  let expandedProjects = new Set(); // project ids with models loaded/shown
+  let projectModels = {};           // pid → [{name, urn, path, last_modified}]
+  let bmData = null;
+  let bmBarChart = null;
+  let bmPieCharts = [];
+
+  const CHART_COLORS = [
+    '#0070d2','#e66000','#2e844a','#9050e9','#d83a00',
+    '#0b7cba','#6e6e6e','#4bc076','#f0a500','#c23934',
+  ];
+
+  function bmShowStatus(msg, type='info') {
+    bmStatus.textContent = msg;
+    bmStatus.className = 'status ' + type;
+    bmStatus.style.display = 'block';
+  }
+  function bmHideStatus() { bmStatus.style.display = 'none'; }
+
+  function updateBmCount() {
+    const n = selectedModels.size;
+    bmSelectedCount.textContent = n + ' model' + (n !== 1 ? 's' : '') + ' selected';
+    bmRunBtn.disabled = n < 2;
+  }
+
+  async function loadBmProjects() {
+    if (allProjectsList.length) { renderBmProjectList(''); return; }
+    try {
+      const res = await fetch('/api/projects');
+      allProjectsList = await res.json();
+      renderBmProjectList('');
+    } catch(e) {
+      bmShowStatus('Failed to load projects: ' + e.message, 'error');
+    }
+  }
+
+  async function loadProjectModels(pid, hubId) {
+    if (projectModels[pid]) return projectModels[pid];
+    const res = await fetch('/api/projects/' + encodeURIComponent(pid) + '/models?hub_id=' + encodeURIComponent(hubId));
+    if (!res.ok) return [];
+    projectModels[pid] = await res.json();
+    return projectModels[pid];
+  }
+
+  function renderBmProjectList(query) {
+    const q = query.toLowerCase();
+    bmProjectList.innerHTML = '';
+
+    // Show selected models pinned at top
+    if (selectedModels.size > 0) {
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'font-size:10px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.06em;padding:4px 4px 2px;';
+      hdr.textContent = 'Selected Models';
+      bmProjectList.appendChild(hdr);
+      selectedModels.forEach((info, urn) => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 8px;background:var(--blue-light);border-radius:3px;margin-bottom:2px;font-size:12px;';
+        const cb = document.createElement('input');
+        cb.type='checkbox'; cb.checked=true; cb.style.accentColor='var(--blue)';
+        cb.addEventListener('change', () => { selectedModels.delete(urn); updateBmCount(); renderBmProjectList(bmSearch.value); });
+        const lbl = document.createElement('span');
+        lbl.textContent = info.label;
+        lbl.style.flex = '1';
+        row.appendChild(cb); row.appendChild(lbl);
+        bmProjectList.appendChild(row);
+      });
+      const sep = document.createElement('div');
+      sep.style.cssText = 'border-bottom:1px solid var(--border);margin:8px 0 4px;';
+      bmProjectList.appendChild(sep);
+    }
+
+    // Project accordion list
+    const filtered = allProjectsList.filter(p => p.name.toLowerCase().includes(q));
+    filtered.forEach(p => {
+      const projRow = document.createElement('div');
+      projRow.style.cssText = 'border-bottom:1px solid #f0f0f0;';
+
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;font-size:13px;color:var(--text);';
+      header.onmouseenter = () => header.style.background='var(--bg)';
+      header.onmouseleave = () => header.style.background='';
+
+      const arrow = document.createElement('span');
+      const isExpanded = expandedProjects.has(p.id);
+      arrow.textContent = isExpanded ? '▼' : '▶';
+      arrow.style.cssText = 'font-size:9px;color:var(--text-light);width:12px;flex-shrink:0;';
+      header.appendChild(arrow);
+      const name = document.createElement('span'); name.textContent = p.name; name.style.flex='1';
+      header.appendChild(name);
+
+      const modelsContainer = document.createElement('div');
+      modelsContainer.style.cssText = 'padding-left:20px;display:' + (isExpanded ? 'block' : 'none') + ';';
+
+      if (isExpanded && projectModels[p.id]) {
+        renderModelCheckboxes(modelsContainer, p, projectModels[p.id]);
+      }
+
+      header.addEventListener('click', async () => {
+        if (expandedProjects.has(p.id)) {
+          expandedProjects.delete(p.id);
+          arrow.textContent = '▶';
+          modelsContainer.style.display = 'none';
+        } else {
+          expandedProjects.add(p.id);
+          arrow.textContent = '▼';
+          modelsContainer.style.display = 'block';
+          modelsContainer.textContent = 'Loading…';
+          try {
+            const models = await loadProjectModels(p.id, p.hub_id);
+            modelsContainer.textContent = '';
+            renderModelCheckboxes(modelsContainer, p, models);
+          } catch(e) {
+            modelsContainer.textContent = 'Failed to load';
+          }
+        }
+      });
+
+      projRow.appendChild(header);
+      projRow.appendChild(modelsContainer);
+      bmProjectList.appendChild(projRow);
+    });
+
+    if (!filtered.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:var(--text-light);font-size:13px;padding:8px';
+      empty.textContent = 'No projects found';
+      bmProjectList.appendChild(empty);
+    }
+  }
+
+  function renderModelCheckboxes(container, proj, models) {
+    if (!models.length) {
+      container.textContent = 'No models found';
+      return;
+    }
+    models.forEach(m => {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:4px 4px;cursor:pointer;border-radius:3px;font-size:12px;';
+      row.onmouseenter = () => row.style.background='var(--blue-light)';
+      row.onmouseleave = () => row.style.background = selectedModels.has(m.urn) ? 'var(--blue-light)' : '';
+
+      const cb = document.createElement('input');
+      cb.type='checkbox'; cb.checked=selectedModels.has(m.urn); cb.style.accentColor='var(--blue)'; cb.style.marginTop='2px';
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          selectedModels.set(m.urn, { label: proj.name + ' — ' + m.name, hubId: proj.hub_id });
+        } else {
+          selectedModels.delete(m.urn);
+        }
+        updateBmCount();
+        renderBmProjectList(bmSearch.value);
+      });
+
+      const info = document.createElement('div');
+      const mname = document.createElement('div'); mname.textContent = m.name; mname.style.fontWeight='600';
+      const mdate = document.createElement('div');
+      mdate.style.cssText = 'font-size:11px;color:var(--text-light)';
+      mdate.textContent = m.last_modified ? 'Published ' + fmt(m.last_modified) : '';
+      info.appendChild(mname); info.appendChild(mdate);
+      row.appendChild(cb); row.appendChild(info);
+      container.appendChild(row);
+    });
+  }
+
+  bmSearch.addEventListener('input', () => renderBmProjectList(bmSearch.value));
+
+  bmRunBtn.addEventListener('click', async () => {
+    if (selectedModels.size < 2) return;
+    bmRunBtn.disabled = true;
+    bmSpinner.style.display = 'inline-block';
+    bmBtnLabel.textContent = 'Running…';
+    bmResults.style.display = 'none';
+    bmHideStatus();
+
+    const bmType = document.getElementById('bm-schedule-type').value;
+    // Pass URNs directly — backend uses them instead of finding models
+    const params = new URLSearchParams({ schedule_type: bmType });
+    selectedModels.forEach((info, urn) => {
+      params.append('model_urns', urn);
+      params.append('model_labels', info.label);
+    });
+
+    try {
+      const res = await fetch('/api/benchmark-urns?' + params);
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || res.statusText); }
+      bmData = await res.json();
+      renderBmResults(bmData);
+      bmResults.style.display = 'block';
+      bmExportBtn.style.display = '';
+    } catch(e) {
+      bmShowStatus('Error: ' + e.message, 'error');
+    } finally {
+      bmRunBtn.disabled = false;
+      bmSpinner.style.display = 'none';
+      bmBtnLabel.textContent = 'Run Benchmark';
+    }
+  });
+
+  function renderBmResults(data) {
+    document.getElementById('bm-results-title').textContent =
+      data.schedule_type === 'floors' ? 'Floor Type Mix by Model' : 'Benchmark Results';
+
+    const thead = document.getElementById('bm-thead');
+    const tbody = document.getElementById('bm-tbody');
+    thead.innerHTML = ''; tbody.innerHTML = '';
+
+    const prefixes = data.prefixes || [];
+    const headRow = document.createElement('tr');
+    ['Model', 'Total Area (ft²)', ...prefixes.map(p => data.prefix_labels[p] + ' (' + p + ')')].forEach(h => {
+      const th = document.createElement('th'); th.textContent = h; headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+
+    data.table.forEach(row => {
+      const tr = document.createElement('tr');
+      let td = document.createElement('td');
+      td.textContent = row['Project']; td.style.fontWeight='600'; tr.appendChild(td);
+      td = document.createElement('td'); td.textContent = row['Total Area (ft²)']; tr.appendChild(td);
+      prefixes.forEach(p => {
+        const label = data.prefix_labels[p];
+        const sqft = row[label + ' (' + p + ') ft²'] || '0';
+        const pct  = row[label + ' (' + p + ') %']  || '0.0%';
+        td = document.createElement('td');
+        td.innerHTML = sqft + '<br><span style="font-size:11px;color:var(--text-mid)">' + pct + '</span>';
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    if (bmBarChart) bmBarChart.destroy();
+    const barCtx = document.getElementById('bm-bar-chart').getContext('2d');
+    bmBarChart = new Chart(barCtx, {
+      type: 'bar',
+      data: {
+        labels: data.projects,
+        datasets: data.chart_groups.map((g, i) => ({
+          label: g.label, data: g.values_sqft,
+          backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
+        })),
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } },
+        scales: {
+          x: { stacked: true, ticks: { font: { size: 11 } } },
+          y: { stacked: true, ticks: { font: { size: 11 } }, title: { display: true, text: 'Area (ft²)', font: { size: 11 } } },
+        },
+      },
+    });
+
+    bmPieCharts.forEach(c => c.destroy()); bmPieCharts = [];
+    const pieGrid = document.getElementById('bm-pie-grid'); pieGrid.innerHTML = '';
+    data.pie_data.forEach(proj => {
+      const wrap = document.createElement('div'); wrap.style.cssText = 'text-align:center';
+      const title = document.createElement('div');
+      title.style.cssText = 'font-size:11px;font-weight:600;margin-bottom:6px;color:var(--text-mid)';
+      title.textContent = proj.project;
+      const canvas = document.createElement('canvas'); canvas.height = 160;
+      wrap.appendChild(title); wrap.appendChild(canvas); pieGrid.appendChild(wrap);
+      const colors = proj.slices.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]);
+      const chart = new Chart(canvas.getContext('2d'), {
+        type: 'doughnut',
+        data: { labels: proj.slices.map(s => s.label), datasets: [{ data: proj.slices.map(s => s.value), backgroundColor: colors, borderWidth: 1 }] },
+        options: { responsive: true, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.label + ': ' + ctx.parsed + '%' } } } },
+      });
+      bmPieCharts.push(chart);
+    });
+  }
+
+  bmExportBtn.addEventListener('click', () => {
+    if (!bmData) return;
+    const cols = ['Model', 'Total Area (ft²)', ...bmData.prefixes.map(p => {
+      const l = bmData.prefix_labels[p];
+      return [l+'('+p+') ft²', l+'('+p+') %'];
+    }).flat()];
+    const tableWithModel = bmData.table.map(r => ({ ...r, 'Model': r['Project'] }));
+    const csv = [cols, ...tableWithModel.map(r => cols.map(c => '"' + String(r[c]??'').replace(/"/g,'""') + '"'))]
+      .map(r => r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+    a.download = 'benchmark.csv'; a.click();
   });
 
   loadProjects();

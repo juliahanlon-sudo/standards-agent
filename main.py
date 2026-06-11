@@ -9,6 +9,8 @@ import aps_client as aps
 import airtable_client as at
 import capacity_engine as cap_eng
 import spatial_join as sj
+import benchmark_engine as bm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = FastAPI()
 
@@ -27,7 +29,7 @@ SCHEDULE_CATEGORIES = {
 }
 
 PRESET_COLUMNS = {
-    "furniture": ["SFDC_Tag Number", "Frame Tag", "SFDC_Seat Count", "Family", "Type", "Count", "Manufacturer"],
+    "furniture": ["SFDC_Tag Number", "SFDC_Seat Count", "Family", "Type", "Count", "Manufacturer"],
     "rooms":     ["Number", "Name", "Area", "Level", "Occupancy"],
     "floors":    ["Type", "Type Mark", "Level", "Area"],
     "casework":  ["Family & Type", "Count", "Manufacturer", "Finish 1"],
@@ -365,6 +367,18 @@ def get_schedule(
         # Build a set of type node names from the tree for category matching
         type_node_names = {tn["objectid"]: tn["name"] for tn in all_type_nodes}
 
+        # Build reverse map: instance_objectid → family_name (tree node name)
+        # Each type node in the tree contains instance objects
+        instance_to_family = {}
+        for cat_node in cat_nodes.values():
+            for type_node in cat_node.get("objects", []):
+                family = type_node.get("name", "")
+                # Direct type node objectid → family
+                instance_to_family[type_node["objectid"]] = family
+                # Instance children → same family
+                for inst in type_node.get("objects", []):
+                    instance_to_family[inst["objectid"]] = family
+
         # Also include all instance objectids directly from the tree
         # This handles cases where instance names differ from type node names (e.g. Floors)
         all_category_ids = all_instance_ids | set(type_node_names.keys())
@@ -414,7 +428,11 @@ def get_schedule(
                 key = (bn, type_name)
                 groups[key]["total"] += 1
                 groups[key]["levels"][level] += 1
-                groups[key]["type_node_name"] = bn
+                # Look up the true family name from the tree hierarchy
+                obj_id = obj.get("objectid")
+                family_from_tree = instance_to_family.get(obj_id, "")
+                if not groups[key]["type_node_name"]:
+                    groups[key]["type_node_name"] = family_from_tree or bn
                 if groups[key]["param_obj"] is None:
                     groups[key]["param_obj"] = obj
 
@@ -467,7 +485,14 @@ def get_schedule(
                 elif col == "Area" and schedule_type in ("floors", "finishes"):
                     row[col] = area_str or fp.get("Area", "")
                 elif col in ("SFDC_Tag Number", "Type Mark"):
-                    row[col] = fp.get("SFDC_Tag Number", "") or fp.get("SFDC_TAG NUMBER", "") or fp.get("Type Mark", "")
+                    val = fp.get("SFDC_Tag Number", "") or fp.get("SFDC_TAG NUMBER", "") or fp.get("Type Mark", "")
+                    # For floors: if Type Mark empty, extract code from Type name
+                    if not val and schedule_type in ("floors", "finishes"):
+                        import re as _re3
+                        m = _re3.search(r'\b([A-Za-z]{2,4}-\d+)\b', type_name)
+                        if m:
+                            val = m.group(1).upper()
+                    row[col] = val
                 else:
                     row[col] = fp.get(col, "")
 
@@ -529,6 +554,231 @@ def get_capacity(
             return {"iw": 0, "open_collab": 0, "amenity": 0, "total": 0, "breakdown": [], "levels": []}
 
         result = cap_eng.calculate_capacity(furniture_items)
+        return result
+
+    except HTTPException:
+        raise
+    except requests.HTTPError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _fetch_floor_items(token: str, urn: str) -> list:
+    """Fetch floor schedule items for a single URN. Used by benchmark."""
+    views = aps.get_model_views(token, urn)
+    if not views:
+        return []
+
+    target_categories = SCHEDULE_CATEGORIES["floors"]
+    guid = get_guid(views)
+    tree_data = aps.get_object_tree(token, urn, guid)
+    top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
+    cat_nodes = get_tree_nodes_by_category(top_objects, target_categories)
+
+    master_count = sum(
+        sum(len(t.get("objects", [])) for t in cat.get("objects", []))
+        for cat in cat_nodes.values()
+    ) if cat_nodes else 0
+
+    if not cat_nodes or master_count < 2:
+        better_guid = get_best_guid_for_schedule(token, urn, views, target_categories)
+        if better_guid != guid:
+            guid = better_guid
+            tree_data = aps.get_object_tree(token, urn, guid)
+            top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
+            cat_nodes = get_tree_nodes_by_category(top_objects, target_categories)
+
+    if not cat_nodes:
+        return []
+
+    all_type_nodes, all_instance_ids = [], set()
+    for cat_node in cat_nodes.values():
+        tnodes, iids = collect_type_and_instance_ids(cat_node)
+        all_type_nodes.extend(tnodes)
+        all_instance_ids.update(iids)
+
+    type_node_name_set = set(tn["name"] for tn in all_type_nodes)
+    all_category_ids = all_instance_ids | set(tn["objectid"] for tn in all_type_nodes)
+
+    props_data = aps.get_properties(token, urn, guid)
+    collection = props_data.get("data", {}).get("collection", [])
+
+    import re as _re
+    def base_name(name):
+        return _re.sub(r'\s*\[\d+\]$', '', name).strip()
+
+    groups = defaultdict(lambda: {"area_sum": 0.0, "area_unit": "", "param_obj": None})
+
+    for obj in collection:
+        obj_name = obj.get("name", "")
+        bn = base_name(obj_name)
+        if bn not in type_node_name_set and obj.get("objectid") not in all_category_ids:
+            continue
+        fp_obj = flat_props(obj)
+        type_name = fp_obj.get("Type Name", "").strip() or bn
+        level = fp_obj.get("Level") or fp_obj.get("Schedule Level") or ""
+        area_val = fp_obj.get("Area", "")
+        if not level and not area_val:
+            continue
+        try:
+            area_num = float(str(area_val).split()[0]) if area_val else 0.0
+        except (ValueError, IndexError):
+            area_num = 0.0
+        key = (type_name, level)
+        groups[key]["area_sum"] += area_num
+        groups[key]["area_unit"] = str(area_val).split()[-1] if area_val and len(str(area_val).split()) > 1 else "ft^2"
+        if groups[key]["param_obj"] is None:
+            groups[key]["param_obj"] = obj
+
+    items = []
+    for (type_name, level), grp in groups.items():
+        fp = flat_props(grp["param_obj"]) if grp["param_obj"] else {}
+        area_sum = grp["area_sum"]
+        area_unit = grp.get("area_unit", "ft^2")
+
+        # Use Type Mark if populated; otherwise extract code pattern from Type name
+        type_mark = fp.get("Type Mark", "").strip()
+        if not type_mark:
+            import re as _re2
+            m = _re2.search(r'\b([A-Za-z]{2,4}-\d+)\b', type_name)
+            if m:
+                type_mark = m.group(1).upper()
+
+        items.append({
+            "Type": type_name,
+            "Type Mark": type_mark,
+            "Level": level,
+            "Area": f"{area_sum:.3f} {area_unit}".strip() if area_sum else "",
+        })
+    return items
+
+
+@app.get("/api/benchmark")
+def run_benchmark(
+    project_ids: List[str] = Query(...),
+    project_names: List[str] = Query(default=[]),
+    hub_id: str = Query(default=HUB_ID),
+    schedule_type: str = Query(default="floors"),
+):
+    try:
+        token = get_token()
+
+        # Build pid → name map from passed names (same order as project_ids)
+        pid_to_name = {
+            pid: (project_names[i] if i < len(project_names) else pid)
+            for i, pid in enumerate(project_ids)
+        }
+
+        # Find best model URN per project in parallel
+        import re as _re
+        arch_kw = _re.compile(r'ar[-_]|arch[-_]|interior|int[-_]|ia[-_]', _re.IGNORECASE)
+        furn_kw = _re.compile(r'furn|fn[-_]|sym[-_]furn', _re.IGNORECASE)
+
+        def get_project_urn(pid: str):
+            try:
+                files = aps.find_rvt_files(token, hub_id, pid)
+                arch_files = sorted(
+                    [f for f in files if arch_kw.search(f["name"]) and not furn_kw.search(f["name"])],
+                    key=lambda x: x.get("last_modified", ""), reverse=True
+                )
+                best = arch_files[0] if arch_files else (files[0] if files else None)
+                return pid, pid_to_name[pid], best["urn"] if best else None
+            except Exception:
+                return pid, pid_to_name[pid], None
+
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futures = {ex.submit(get_project_urn, pid): pid for pid in project_ids}
+            project_urns = {}
+            for future in as_completed(futures):
+                pid, name, urn = future.result()
+                project_urns[pid] = (name, urn)
+
+        # Fetch floor data in parallel
+        def fetch_one(pid):
+            name, urn = project_urns[pid]
+            if not urn:
+                return {"project": name, "groups": {}, "total_area": 0.0, "error": "No model found"}
+            try:
+                items = _fetch_floor_items(token, urn)
+                groups = {}
+                total = 0.0
+                for item in items:
+                    tm = item.get("Type Mark", "")
+                    tn = item.get("Type", "")
+                    area_str = item.get("Area", "")
+                    try:
+                        area_val = float(str(area_str).split()[0]) if area_str else 0.0
+                    except (ValueError, IndexError):
+                        area_val = 0.0
+                    prefix = bm.extract_prefix(tm, tn)
+                    groups[prefix] = groups.get(prefix, 0.0) + area_val
+                    total += area_val
+                return {"project": name, "groups": groups, "total_area": total, "error": None}
+            except Exception as e:
+                return {"project": name, "groups": {}, "total_area": 0.0, "error": str(e)}
+
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futures = {ex.submit(fetch_one, pid): pid for pid in project_ids}
+            results = [future.result() for future in as_completed(futures)]
+
+        # Sort results to match input order
+        results.sort(key=lambda r: next(
+            (i for i, pid in enumerate(project_ids) if project_urns[pid][0] == r["project"]), 999
+        ))
+
+        return bm.build_benchmark_result(results)
+
+    except HTTPException:
+        raise
+    except requests.HTTPError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/benchmark-urns")
+def run_benchmark_urns(
+    model_urns: List[str] = Query(...),
+    model_labels: List[str] = Query(default=[]),
+    schedule_type: str = Query(default="floors"),
+):
+    """Benchmark using explicit model URNs — supports multiple models per project."""
+    try:
+        token = get_token()
+
+        urn_to_label = {
+            urn: (model_labels[i] if i < len(model_labels) else urn.split("version=")[-1])
+            for i, urn in enumerate(model_urns)
+        }
+
+        def fetch_one(urn):
+            label = urn_to_label[urn]
+            try:
+                items = _fetch_floor_items(token, urn)
+                groups = {}
+                total = 0.0
+                for item in items:
+                    tm = item.get("Type Mark", "")
+                    tn = item.get("Type", "")
+                    area_str = item.get("Area", "")
+                    try:
+                        area_val = float(str(area_str).split()[0]) if area_str else 0.0
+                    except (ValueError, IndexError):
+                        area_val = 0.0
+                    prefix = bm.extract_prefix(tm, tn)
+                    groups[prefix] = groups.get(prefix, 0.0) + area_val
+                    total += area_val
+                return {"project": label, "groups": groups, "total_area": total, "error": None}
+            except Exception as e:
+                return {"project": label, "groups": {}, "total_area": 0.0, "error": str(e)}
+
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            futures = [ex.submit(fetch_one, urn) for urn in model_urns]
+            results = [f.result() for f in futures]
+
+        result = bm.build_benchmark_result(results)
+        result["schedule_type"] = schedule_type
         return result
 
     except HTTPException:

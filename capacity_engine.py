@@ -66,7 +66,7 @@ RAW_DIRECTORY = [
     ("Conference Room (Aloha)",   ["Aloha Conference Room"],                                            0,    "L3 - Enclosed Collaboration"),
     ("Conference Room (L)",       ["Conference Room (L)"],                                              0,    "L3 - Enclosed Collaboration"),
     ("Conference Room (M)",       ["Conference Room (M)"],                                              0,    "L3 - Enclosed Collaboration"),
-    ("Conference Room (XL)",      ["Conference Room (XL)"],                                             0,    "L3 - Enclosed Collaboration"),
+    ("Conference Room (XL)",      ["Conference Room (XL)", "Conference Room (XL) - Restricted"],      0.75, "L3 - Enclosed Collaboration"),
     ("Focus Pod",                 ["Focus Pod"],                                                        0,    "L3 - Enclosed Collaboration"),
     ("Huddle Room",               ["Huddle Room", "Huddle", "SIC - Huddle Room"],                      0,    "L3 - Enclosed Collaboration"),
     ("Meeting Pod",               ["Meeting Pod (M)", "Meeting Pod (S)", "Meeting Pod (L)"],           0,    "L3 - Enclosed Collaboration"),
@@ -116,6 +116,8 @@ def get_category(serraview_name: str, l3_section: str, multiplier: float) -> str
         return "IW"
     if l3_section == "L3 - Open Collaboration":
         return "Open Collab"
+    if multiplier == 0.75:
+        return "Amenity"
     if l3_section == "L3 - Enclosed Collaboration":
         return "Enclosed Collab"
     if l3_section == "L3 - Workspace Specialty":
@@ -126,8 +128,6 @@ def get_category(serraview_name: str, l3_section: str, multiplier: float) -> str
         return "Building Specialty"
     if l3_section in ("L3 - M&E", "L2 - Support", "L1 - Core"):
         return "Support"
-    if multiplier == 0.75:
-        return "Amenity"
     return "Unmatched"
 
 
