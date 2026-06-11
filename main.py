@@ -500,7 +500,11 @@ def get_schedule(
 
             if schedule_type == "furniture":
                 sfdc_tag = fp.get("SFDC_Tag Number", "") or fp.get("SFDC_TAG NUMBER", "")
-                frame_tag = fp.get("Frame Tag", "")
+                # Frame Tag in Revit is stored as Type Mark (e.g. CH-08, SS-01)
+                frame_tag = fp.get("Type Mark", "") or fp.get("Frame Tag", "")
+                # Populate Frame Tag column in row if requested
+                if "Frame Tag" in cols:
+                    row["Frame Tag"] = frame_tag
                 validation = at.validate_row(sfdc_tag, frame_tag, at_records)
                 row["Validation Status"] = validation["status"]
                 row["_validation_color"] = validation["color"]

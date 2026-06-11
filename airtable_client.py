@@ -20,7 +20,7 @@ def parse_region(project_name: str) -> str:
     return ""
 
 
-def fetch_records(region: str) -> list[dict]:
+def fetch_records(region: str = "") -> list[dict]:
     if not API_KEY or API_KEY == "your_airtable_api_key_here":
         return []
     headers = {"Authorization": f"Bearer {API_KEY}"}
@@ -43,21 +43,66 @@ def fetch_records(region: str) -> list[dict]:
     return records
 
 
-def validate_row(sfdc_tag: str, frame_tag: str, records: list[dict]) -> dict:
-    if not sfdc_tag and not frame_tag:
-        return {"status": "No Tag", "color": "grey"}
+STATUS_PRIORITY = {"retired": 0, "inactive": 1, "active": 2, "": 3}
 
+
+def build_lookup(records: list[dict]) -> dict:
+    """
+    Build a lookup dict: frame_tag (lowercase) → {status, new_tag, frame_tag}
+    When duplicates exist, keep the most conservative status (Retired > Active).
+    """
+    lookup = {}
     for rec in records:
         fields = rec.get("fields", {})
+        ft = str(fields.get("Frame Tag", "")).strip().lower()
         new_tag = str(fields.get("NEW TAG NUMBER", "")).strip()
-        if new_tag and sfdc_tag and new_tag.lower() == sfdc_tag.strip().lower():
-            return {"status": "Validated", "color": "green"}
+        status = str(fields.get("Status", "")).strip()
+        if not ft:
+            continue
+        entry = {"frame_tag": fields.get("Frame Tag", ""), "new_tag": new_tag, "status": status}
+        if ft not in lookup:
+            lookup[ft] = entry
+        else:
+            # Keep the more conservative status
+            existing_priority = STATUS_PRIORITY.get(lookup[ft]["status"].lower(), 3)
+            new_priority = STATUS_PRIORITY.get(status.lower(), 3)
+            if new_priority < existing_priority:
+                lookup[ft] = entry
+    return lookup
 
-    if frame_tag:
-        for rec in records:
-            fields = rec.get("fields", {})
-            ft = str(fields.get("Frame Tag", "")).strip()
-            if ft and ft.lower() == frame_tag.strip().lower():
-                return {"status": "Frame Match - Pending Fabric", "color": "yellow"}
 
-    return {"status": "Not Found", "color": "red"}
+def validate_row(sfdc_tag: str, frame_tag: str, records: list[dict]) -> dict:
+    """
+    Validate a furniture row against Airtable:
+    - Match by Frame Tag field in Airtable
+    - If found and Status = Active  → green  "Active"
+    - If found and Status = Retired → red    "Retired"
+    - If found and Status = other   → yellow "Inactive"
+    - If not found at all           → yellow "Not in Airtable"
+    - If no tag to look up          → grey   "No Tag"
+    """
+    # Use Frame Tag as primary lookup key; fall back to SFDC tag
+    lookup_key = (frame_tag or sfdc_tag or "").strip().lower()
+
+    if not lookup_key:
+        return {"status": "No Tag", "color": "grey"}
+
+    # Build lookup from records
+    lkp = build_lookup(records)
+    match = lkp.get(lookup_key)
+
+    if not match:
+        # Also try SFDC tag if frame_tag didn't match
+        if sfdc_tag and sfdc_tag.strip().lower() != lookup_key:
+            match = lkp.get(sfdc_tag.strip().lower())
+
+    if match:
+        status = match["status"]
+        if status.lower() == "active":
+            return {"status": "Active", "color": "green"}
+        elif status.lower() == "retired":
+            return {"status": "Retired", "color": "red"}
+        else:
+            return {"status": status or "Inactive", "color": "yellow"}
+
+    return {"status": "Not in Airtable", "color": "yellow"}
