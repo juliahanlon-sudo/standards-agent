@@ -10,9 +10,15 @@ import airtable_client as at
 import capacity_engine as cap_eng
 import spatial_join as sj
 import benchmark_engine as bm
+import report_runner as rr
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = FastAPI()
+
+
+@app.on_event("startup")
+async def startup():
+    rr.start_scheduler()
 
 HUB_ID = "b.8a643169-4b2b-4c79-bff4-289208a76b2e"
 
@@ -243,6 +249,7 @@ def get_schedule(
     project_name: str = Query(default=""),
     schedule_type: str = Query(default="furniture"),
     selected_columns: List[str] = Query(default=[]),
+    itemize: bool = Query(default=False),
 ):
     try:
         token = get_token()
@@ -393,7 +400,8 @@ def get_schedule(
         # Group by base_name + level — scan entire collection
         groups = defaultdict(lambda: {
             "total": 0, "levels": defaultdict(int),
-            "param_obj": None, "type_node_name": ""
+            "param_obj": None, "type_node_name": "",
+            "instances": []  # list of (objectid, externalId) for itemize mode
         })
 
         for obj in collection:
@@ -405,6 +413,18 @@ def get_schedule(
             fp_obj = flat_props(obj)
             type_name = fp_obj.get("Type Name", "").strip() or bn
             level = fp_obj.get("Level") or fp_obj.get("Schedule Level") or ""
+
+            # For furniture: skip bare type nodes (no element ID, no level, no data)
+            # These are the category/type header objects that duplicate instance rows
+            if schedule_type == "furniture":
+                obj_id = obj.get("objectid")
+                is_instance = "[" in obj_name or obj_id in all_instance_ids
+                has_distinct_type = bool(fp_obj.get("Type Name", "").strip() and
+                                         fp_obj.get("Type Name", "").strip() != bn)
+                has_sfdc_data = bool(fp_obj.get("SFDC_Tag Number") or fp_obj.get("SFDC_TAG NUMBER") or
+                                     fp_obj.get("SFDC_Seat Count") or fp_obj.get("Manufacturer"))
+                if not is_instance and not has_sfdc_data:
+                    continue  # skip bare type/category nodes without SFDC data
 
             # For floors: skip elements with no level AND no area (type/category nodes)
             if schedule_type in ("floors", "finishes"):
@@ -425,7 +445,10 @@ def get_schedule(
                 if groups[key]["param_obj"] is None:
                     groups[key]["param_obj"] = obj
             else:
-                key = (bn, type_name)
+                sfdc_tag_key = fp_obj.get("SFDC_Tag Number", "") or fp_obj.get("SFDC_TAG NUMBER", "") or fp_obj.get("Type Mark", "")
+                # Use objectid as tiebreaker for identical items with no distinguishing data
+                obj_id_key = obj.get("objectid", "") if not sfdc_tag_key and not type_name else ""
+                key = (bn, type_name, sfdc_tag_key or obj_id_key)
                 groups[key]["total"] += 1
                 groups[key]["levels"][level] += 1
                 # Look up the true family name from the tree hierarchy
@@ -433,8 +456,31 @@ def get_schedule(
                 family_from_tree = instance_to_family.get(obj_id, "")
                 if not groups[key]["type_node_name"]:
                     groups[key]["type_node_name"] = family_from_tree or bn
-                if groups[key]["param_obj"] is None:
+                # Prefer objects that have SFDC data over bare type nodes
+                existing = groups[key]["param_obj"]
+                if existing is None:
                     groups[key]["param_obj"] = obj
+                else:
+                    # Replace if this object has tag/seat data and existing doesn't
+                    existing_fp = flat_props(existing)
+                    new_fp = flat_props(obj)
+                    has_sfdc_new = bool(new_fp.get("SFDC_Tag Number") or new_fp.get("SFDC_TAG NUMBER") or new_fp.get("Type Mark"))
+                    has_sfdc_existing = bool(existing_fp.get("SFDC_Tag Number") or existing_fp.get("SFDC_TAG NUMBER") or existing_fp.get("Type Mark"))
+                    if has_sfdc_new and not has_sfdc_existing:
+                        groups[key]["param_obj"] = obj
+                # Store instance info for itemize mode
+                if obj_id and "[" in obj_name:  # only placed instances have element IDs in name
+                    inst_entry = {
+                        "objectid": obj_id,
+                        "externalId": obj.get("externalId", ""),
+                        "level": level,
+                    }
+                    groups[key]["instances"].append(inst_entry)
+                    # Also add to the tree-family-keyed group if different (handles WK sub-parts)
+                    if family_from_tree and family_from_tree != bn:
+                        family_key = (family_from_tree, type_name)
+                        if family_key in groups:
+                            groups[family_key]["instances"].append(inst_entry)
 
         # Determine level filter from request (passed via selected_columns hack or derived)
         # We'll emit one row per type with total count, plus level breakdown in metadata
@@ -509,7 +555,28 @@ def get_schedule(
                 row["Validation Status"] = validation["status"]
                 row["_validation_color"] = validation["color"]
 
+            # Attach instance list for itemize mode (furniture only)
+            if schedule_type == "furniture":
+                row["_instances"] = grp.get("instances", [])
+
             rows.append(row)
+
+        # For furniture: deduplicate rows that are bare type nodes
+        # (Count=1, no instances, same family+tag as another row)
+        if schedule_type == "furniture":
+            seen_keys = set()
+            deduped = []
+            for row in rows:
+                # Key: family + tag (or type if no tag)
+                dedup_key = (row.get("Family", ""), row.get("SFDC_Tag Number", "") or row.get("Type Mark", "") or row.get("Type", ""))
+                instances = row.get("_instances", [])
+                is_bare = (row.get("Count", "0") == "1" and not instances and
+                           not row.get("SFDC_Seat Count", "0").replace("0",""))
+                if is_bare and dedup_key in seen_keys:
+                    continue  # skip bare duplicate
+                seen_keys.add(dedup_key)
+                deduped.append(row)
+            rows = deduped
 
         if schedule_type in ("floors", "finishes"):
             rows.sort(key=lambda x: (x.get("Level", ""), x.get("Type Mark", "") or x.get("Type", "")))
@@ -789,6 +856,135 @@ def run_benchmark_urns(
         raise
     except requests.HTTPError as e:
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/scheduled-reports")
+def list_scheduled_reports():
+    return rr.load_configs()
+
+
+@app.post("/api/scheduled-reports")
+async def create_scheduled_report(body: dict):
+    import uuid
+    from datetime import datetime, timedelta
+    configs = rr.load_configs()
+    config = {
+        "id": str(uuid.uuid4())[:8],
+        "name": body.get("name", "Report"),
+        "enabled": True,
+        "models": body.get("models", []),
+        "report_types": body.get("report_types", ["capacity", "furniture"]),
+        "interval_days": body.get("interval_days", 14),
+        "drive_folder_id": body.get("drive_folder_id", "root"),
+        "hub_id": body.get("hub_id", HUB_ID),
+        "created_at": datetime.utcnow().isoformat(),
+        "last_run": None,
+        "next_run": (datetime.utcnow() + timedelta(days=body.get("interval_days", 14))).isoformat(),
+    }
+    configs.append(config)
+    rr.save_configs(configs)
+    return config
+
+
+@app.delete("/api/scheduled-reports/{report_id}")
+def delete_scheduled_report(report_id: str):
+    configs = rr.load_configs()
+    configs = [c for c in configs if c["id"] != report_id]
+    rr.save_configs(configs)
+    return {"ok": True}
+
+
+@app.post("/api/scheduled-reports/{report_id}/run")
+async def run_scheduled_report_now(report_id: str):
+    """Run a report immediately. Returns file contents for Drive upload."""
+    config = rr.get_config(report_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Report not found")
+    try:
+        result = rr.run_report(config)
+        from datetime import datetime
+        configs = rr.load_configs()
+        for i, c in enumerate(configs):
+            if c["id"] == report_id:
+                configs[i]["last_run"] = datetime.utcnow().isoformat()
+        rr.save_configs(configs)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/drive-upload")
+async def upload_to_drive_legacy(body: dict):
+    filename = body.get("filename", "report.csv")
+    content = body.get("content", "")
+    folder_id = body.get("folder_id", "root")
+    return {"filename": filename, "size": len(content), "folder_id": folder_id}
+
+
+@app.post("/api/drive-upload-mcp")
+async def upload_to_drive_mcp(body: dict):
+    filename = body.get("filename", "report.csv")
+    content = body.get("content", "")
+    folder_id = body.get("folder_id", "root")
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, prefix='report_') as f:
+        f.write(content)
+        tmp_path = f.name
+    return {"filename": filename, "tmp_path": tmp_path, "folder_id": folder_id, "size": len(content)}
+
+
+@app.post("/api/drive-upload-execute")
+async def drive_upload_execute(body: dict):
+    """
+    Upload a file to Google Drive.
+    Uses the google-workspace MCP credentials stored in the environment.
+    """
+    import tempfile, os, subprocess, json as _json
+    filename = body.get("filename", "report.csv")
+    content = body.get("content", "")
+    folder_id = body.get("folder_id", "root")
+
+    # Write content to temp file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False,
+                                     prefix='pdp_report_') as f:
+        f.write(content)
+        tmp_path = f.name
+
+    # Store for MCP upload — return tmp_path so Claude can upload via MCP
+    return {
+        "filename": filename,
+        "tmp_path": tmp_path,
+        "folder_id": folder_id,
+        "size": len(content),
+        "file_url": f"file://{tmp_path}",
+        "status": "pending_mcp_upload",
+    }
+
+
+@app.get("/api/viewer-token")
+def get_viewer_token():
+    """Returns a short-lived 2-legged token for the Autodesk Viewer SDK."""
+    try:
+        import requests as _req
+        from auth import CLIENT_ID, CLIENT_SECRET
+        r = _req.post(
+            "https://developer.api.autodesk.com/authentication/v2/token",
+            data={
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "grant_type": "client_credentials",
+                "scope": "data:read viewables:read",
+            },
+        )
+        r.raise_for_status()
+        d = r.json()
+        return {
+            "access_token": d["access_token"],
+            "expires_in": d.get("expires_in", 3600),
+            "token_type": d.get("token_type", "Bearer"),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

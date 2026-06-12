@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Project Data Pull</title>
   <link href="https://fonts.googleapis.com/css2?family=Salesforce+Sans:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/style.min.css" type="text/css">
+  <script src="https://developer.api.autodesk.com/modelderivative/v2/viewers/7.*/viewer3D.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -103,6 +105,30 @@
 
     .results-layout { display:grid; grid-template-columns:220px 1fr; gap:16px; align-items:start; }
 
+    /* ── Viewer panel ── */
+    .viewer-panel {
+      position: fixed; top: 0; right: -520px; width: 500px; height: 100vh;
+      background: var(--white); box-shadow: -4px 0 20px rgba(0,0,0,.15);
+      z-index: 1000; transition: right 0.3s ease; display: flex; flex-direction: column;
+    }
+    .viewer-panel.open { right: 0; }
+    .viewer-panel-header {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--navy); color: white; flex-shrink: 0;
+    }
+    .viewer-panel-header h3 { font-size: 14px; font-weight: 600; }
+    .viewer-panel-close { background: none; border: none; color: white; font-size: 18px; cursor: pointer; padding: 0 4px; }
+    .viewer-panel-info { padding: 10px 16px; font-size: 12px; color: var(--text-mid); border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg); }
+    #viewer-container { flex: 1; position: relative; }
+    .viewer-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--bg); flex-direction: column; gap: 12px; }
+    .viewer-overlay .spinner { width: 28px; height: 28px; border-width: 3px; border-top-color: var(--blue); }
+    .btn-itemize { background: white; color: var(--text-mid); border: 1px solid var(--border); }
+    .btn-itemize:hover { border-color: var(--blue); color: var(--blue); }
+    .btn-itemize.active { background: var(--blue); color: white; border-color: var(--blue); }
+    .viewer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.3); z-index: 999; display: none; }
+    .viewer-backdrop.show { display: block; }
+
     .col-manager { background:var(--white); border-radius:var(--radius); border:1px solid var(--border); box-shadow:var(--shadow-sm); padding:16px; position:sticky; top:24px; max-height:calc(100vh - 48px); overflow-y:auto; }
     .col-manager h3 { font-size:13px; font-weight:700; margin-bottom:12px; }
     .col-section-label { font-size:10px; font-weight:700; color:var(--text-light); text-transform:uppercase; letter-spacing:.08em; margin:12px 0 6px; padding-bottom:4px; border-bottom:1px solid var(--border); }
@@ -177,12 +203,37 @@
     </div>
     <div>
       <div style="font-size:17px;font-weight:700;line-height:1.2">Project Data Pull</div>
-      <div style="font-size:11px;opacity:.65;margin-top:1px">Forma Cloud · Autodesk Platform Services</div>
+      <div style="font-size:11px;opacity:.65;margin-top:1px">Salesforce REWS · Forma Cloud</div>
     </div>
   </div>
 </header>
 
 <main>
+
+  <!-- Intro banner -->
+  <div style="background:linear-gradient(135deg,#032d60 0%,#0070d2 100%);border-radius:8px;padding:24px 28px;margin-bottom:16px;color:white;display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:260px">
+      <div style="font-size:13px;opacity:.9;line-height:1.6;max-width:620px">
+        This tool pulls data directly from your Revit models hosted on Forma Cloud — no manual exports required.
+        All data reflects the <strong>last published version</strong> of each model. Select a project and model to get started.
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;flex-shrink:0;min-width:200px">
+      <div style="background:rgba(255,255,255,.12);border-radius:6px;padding:10px 14px;font-size:12px;">
+        <div style="font-weight:700;opacity:.7;text-transform:uppercase;letter-spacing:.06em;font-size:10px;margin-bottom:4px">What you can do</div>
+        <div style="opacity:.9;line-height:1.7">
+          📋 Furniture &amp; room schedules<br>
+          🏢 Floor finish &amp; casework reports<br>
+          💺 Capacity calculations<br>
+          📊 Multi-site benchmarking<br>
+          🔄 Scheduled automated reports
+        </div>
+      </div>
+      <div style="background:rgba(255,255,255,.12);border-radius:6px;padding:8px 14px;font-size:11px;opacity:.8;">
+        ⚡ Data is live from Forma Cloud via APS
+      </div>
+    </div>
+  </div>
 
   <div class="card" id="project-model-card">
     <div class="section-label">Project &amp; Model</div>
@@ -223,11 +274,29 @@
       <button class="tab" data-type="finishes">Finishes</button>
       <button class="tab" data-type="capacity">Capacity</button>
     </div>
-    <div class="actions">
-      <button class="btn btn-primary" id="run-btn" disabled>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px;">
+      <button class="btn" id="run-btn" disabled style="background:#e66000;color:white;box-shadow:0 1px 3px rgba(230,96,0,.3);">
         <span class="spinner" id="spinner"></span>
         <span id="btn-label">Run Schedule</span>
       </button>
+    </div>
+  </div>
+
+  <!-- Viewer backdrop -->
+  <div class="viewer-backdrop" id="viewer-backdrop"></div>
+
+  <!-- Viewer slide-in panel -->
+  <div class="viewer-panel" id="viewer-panel">
+    <div class="viewer-panel-header">
+      <h3 id="viewer-panel-title">Element Viewer</h3>
+      <button class="viewer-panel-close" id="viewer-close-btn">&#x2715;</button>
+    </div>
+    <div class="viewer-panel-info" id="viewer-panel-info" style="display:none"></div>
+    <div id="viewer-container">
+      <div class="viewer-overlay" id="viewer-overlay">
+        <span class="spinner" style="display:inline-block;border-color:rgba(0,112,210,.3);border-top-color:var(--blue)"></span>
+        <span style="font-size:13px;color:var(--text-mid)">Loading viewer…</span>
+      </div>
     </div>
   </div>
 
@@ -251,6 +320,86 @@
       <button class="btn btn-secondary" id="open-benchmark-btn" style="white-space:nowrap;flex-shrink:0;align-self:flex-start">
         &#9654; Open Benchmarking
       </button>
+    </div>
+  </div>
+
+  <!-- Scheduled Reports card -->
+  <div class="card" style="border-left:3px solid var(--green);">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:280px">
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">Scheduled Reports</div>
+        <div style="font-size:13px;color:var(--text-mid);line-height:1.5">
+          Automatically generate capacity and furniture reports on a schedule and save them to Google Drive.
+        </div>
+      </div>
+      <button class="btn btn-secondary" id="open-reports-btn" style="white-space:nowrap;flex-shrink:0;align-self:flex-start">
+        &#9654; Manage Reports
+      </button>
+    </div>
+  </div>
+
+  <div id="reports-area" style="display:none">
+    <div class="card">
+      <div class="section-label" style="margin-bottom:16px">Create Scheduled Report</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div class="field-group">
+          <div class="field-label">Report Name</div>
+          <input type="text" id="sr-name" placeholder="e.g. Denver Bi-Weekly" />
+        </div>
+        <div class="field-group">
+          <div class="field-label">Google Drive Folder ID</div>
+          <input type="text" id="sr-folder" placeholder="root or folder ID from Drive URL" />
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div class="field-group">
+          <div class="field-label">Run Every</div>
+          <select id="sr-interval">
+            <option value="7">Weekly (every 7 days)</option>
+            <option value="14" selected>Bi-weekly (every 14 days)</option>
+            <option value="30">Monthly (every 30 days)</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <div class="field-label">Report Types</div>
+          <div style="display:flex;gap:16px;padding-top:8px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;text-transform:none;letter-spacing:0;font-weight:400;cursor:pointer">
+              <input type="checkbox" id="sr-type-capacity" checked style="accent-color:var(--blue)"> Capacity
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;text-transform:none;letter-spacing:0;font-weight:400;cursor:pointer">
+              <input type="checkbox" id="sr-type-furniture" checked style="accent-color:var(--blue)"> Furniture
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="field-label" style="margin-bottom:8px">Select Models</div>
+      <p style="font-size:12px;color:var(--text-mid);margin-bottom:10px">For capacity reports select both a furniture and interior model per project. For furniture only, select just the furniture model.</p>
+      <div class="field-group" style="margin-bottom:8px">
+        <input type="text" id="sr-search" placeholder="Search projects…" style="max-width:320px" />
+      </div>
+      <div id="sr-project-list" style="max-height:250px;overflow-y:auto;border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg);margin-bottom:12px">
+        <div style="color:var(--text-light);font-size:13px;padding:6px">Loading…</div>
+      </div>
+
+      <div id="sr-selected-models" style="margin-bottom:16px;display:none">
+        <div class="field-label" style="margin-bottom:8px">Selected Models for Report</div>
+        <div id="sr-model-pairs" style="display:flex;flex-direction:column;gap:8px"></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" id="sr-save-btn" disabled>
+          <span class="spinner" id="sr-spinner"></span>
+          <span id="sr-btn-label">Save Report Schedule</span>
+        </button>
+      </div>
+      <div class="status" id="sr-status"></div>
+    </div>
+
+    <!-- Existing reports list -->
+    <div class="card" id="sr-list-card" style="display:none">
+      <div class="section-label" style="margin-bottom:12px">Scheduled Reports</div>
+      <div id="sr-list"></div>
     </div>
   </div>
 
@@ -304,6 +453,7 @@
           <h2 id="results-title">Schedule</h2>
           <div class="results-meta">
             <span class="results-count" id="results-count"></span>
+            <button class="btn btn-neutral btn-sm btn-itemize" id="itemize-btn" style="display:none">&#9776; Itemize Instances</button>
             <button class="btn btn-neutral btn-sm" id="airtable-btn" style="display:none">&#10003; Compare with Airtable</button>
             <button class="btn btn-neutral btn-sm" id="export-btn">&#8595; Export CSV</button>
           </div>
@@ -423,7 +573,7 @@
 
   function showStatus(msg, type='info') { statusEl.textContent=msg; statusEl.className=`status ${type}`; statusEl.style.display='block'; }
   function hideStatus() { statusEl.style.display='none'; }
-  function setLoading(on) { runBtn.disabled=on; spinner.style.display=on?'inline-block':'none'; btnLabel.textContent=on?'Loading…':'Run Schedule'; }
+  function setLoading(on) { runBtn.disabled=on; spinner.style.display=on?'inline-block':'none'; btnLabel.textContent=on?'Loading…':'Run Schedule'; runBtn.style.opacity=on?'0.6':'1'; }
 
   async function loadProjects() {
     try {
@@ -714,6 +864,11 @@
       activeColumns = [...presetColumns];
       airtableActive = false;
       airtableBtn.style.display = scheduleType === 'furniture' ? '' : 'none';
+      itemizeBtn.style.display = scheduleType === 'furniture' ? '' : 'none';
+      itemizeActive = false;
+      itemizeBtn.classList.remove('active');
+      itemizeBtn.textContent = '⊞ Itemize Instances';
+      if (currentUrn) resetViewer(currentUrn);
       airtableBtn.style.background = '';
       airtableBtn.style.color = '';
       buildColumnManager();
@@ -829,6 +984,12 @@
       });
       headRow.appendChild(th);
     });
+    if (itemizeActive && scheduleType === 'furniture') {
+      const th = document.createElement('th');
+      th.textContent = 'View';
+      th.style.width = '40px';
+      headRow.appendChild(th);
+    }
     tableHead.innerHTML = '';
     tableHead.appendChild(headRow);
 
@@ -843,8 +1004,41 @@
       return;
     }
 
-    rows.forEach(row => {
+    // Itemize mode: expand each grouped row into per-instance rows
+    const displayRows = [];
+    if (itemizeActive && scheduleType === 'furniture') {
+      rows.forEach(row => {
+        const instances = row['_instances'] || [];
+        if (!instances.length) {
+          // No instance data — show as-is with no viewer link
+          displayRows.push({ ...row, _objectid: null, _externalId: null });
+        } else {
+          instances.forEach((inst, idx) => {
+            displayRows.push({
+              ...row,
+              Count: '1',
+              Level: inst.level || row.Level || '',
+              _objectid: inst.objectid,
+              _externalId: inst.externalId,
+              _instance_idx: idx + 1,
+            });
+          });
+        }
+      });
+      resultsCount.textContent = displayRows.length + ' instance' + (displayRows.length !== 1 ? 's' : '');
+    } else {
+      rows.forEach(r => displayRows.push(r));
+    }
+
+    displayRows.forEach(row => {
       const tr = document.createElement('tr');
+      if (itemizeActive && row._objectid) {
+        tr.style.cursor = 'pointer';
+        tr.title = 'Click to view in model';
+        tr.addEventListener('click', () => openViewerPanel(row));
+        tr.onmouseenter = () => tr.style.outline = '2px solid var(--blue)';
+        tr.onmouseleave = () => tr.style.outline = '';
+      }
       cols.forEach(col => {
         const td = document.createElement('td');
         if (col === 'Validation Status') {
@@ -858,6 +1052,12 @@
         }
         tr.appendChild(td);
       });
+      // Add viewer icon in itemize mode
+      if (itemizeActive && row._objectid) {
+        const td = document.createElement('td');
+        td.innerHTML = '<span style="color:var(--blue);font-size:14px" title="View in model">&#9654;</span>';
+        tr.appendChild(td);
+      }
       tableBody.appendChild(tr);
     });
   }
@@ -965,6 +1165,446 @@
     a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
     a.download = 'capacity_breakdown.csv';
     a.click();
+  });
+
+  // ── Scheduled Reports ──────────────────────────────────────────────────
+  const openReportsBtn  = document.getElementById('open-reports-btn');
+  const reportsArea     = document.getElementById('reports-area');
+  const srSearch        = document.getElementById('sr-search');
+  const srProjectList   = document.getElementById('sr-project-list');
+  const srSaveBtn       = document.getElementById('sr-save-btn');
+  const srSpinner       = document.getElementById('sr-spinner');
+  const srBtnLabel      = document.getElementById('sr-btn-label');
+  const srStatus        = document.getElementById('sr-status');
+  const srListCard      = document.getElementById('sr-list-card');
+  const srList          = document.getElementById('sr-list');
+  const srModelPairs    = document.getElementById('sr-model-pairs');
+  const srSelectedModels= document.getElementById('sr-selected-models');
+
+  // Each entry: { projectId, projectName, hubId, modelUrn, modelName, role: 'furniture'|'interior' }
+  let srSelectedEntries = [];
+  let srProjectsList = [];
+  let srProjectModels = {};
+
+  function srShowStatus(msg, type='info') {
+    srStatus.textContent = msg; srStatus.className = 'status '+type; srStatus.style.display='block';
+  }
+  function srHideStatus() { srStatus.style.display='none'; }
+
+  openReportsBtn.addEventListener('click', async () => {
+    const isOpen = reportsArea.style.display !== 'none';
+    reportsArea.style.display = isOpen ? 'none' : 'block';
+    openReportsBtn.textContent = isOpen ? '▶ Manage Reports' : '▼ Close Reports';
+    if (!isOpen) {
+      await loadSrProjects();
+      loadSrList();
+    }
+  });
+
+  async function loadSrProjects() {
+    if (srProjectsList.length) { renderSrProjectList(''); return; }
+    srProjectList.innerHTML = '<div style="color:var(--text-light);font-size:13px;padding:6px">Loading…</div>';
+    try {
+      const res = await fetch('/api/projects');
+      srProjectsList = await res.json();
+      renderSrProjectList('');
+    } catch(e) { srProjectList.innerHTML = '<div style="color:var(--red);font-size:13px;padding:6px">Failed to load projects</div>'; }
+  }
+
+  function renderSrProjectList(query) {
+    const q = query.toLowerCase();
+    srProjectList.innerHTML = '';
+    const filtered = srProjectsList.filter(p => p.name.toLowerCase().includes(q));
+    filtered.forEach(p => {
+      const row = document.createElement('div');
+      row.style.cssText = 'border-bottom:1px solid #f0f0f0;';
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;font-size:13px;';
+      header.onmouseenter = () => header.style.background='var(--bg)';
+      header.onmouseleave = () => header.style.background='';
+      const arrow = document.createElement('span');
+      arrow.textContent = '▶'; arrow.style.cssText = 'font-size:9px;color:var(--text-light);width:12px;';
+      header.appendChild(arrow);
+      const name = document.createElement('span'); name.textContent = p.name; name.style.flex='1';
+      header.appendChild(name);
+      const modelContainer = document.createElement('div');
+      modelContainer.style.cssText = 'padding-left:20px;display:none;';
+
+      header.addEventListener('click', async () => {
+        const open = modelContainer.style.display !== 'none';
+        modelContainer.style.display = open ? 'none' : 'block';
+        arrow.textContent = open ? '▶' : '▼';
+        if (!open && !srProjectModels[p.id]) {
+          modelContainer.textContent = 'Loading…';
+          try {
+            const res = await fetch('/api/projects/'+encodeURIComponent(p.id)+'/models?hub_id='+encodeURIComponent(p.hub_id));
+            srProjectModels[p.id] = await res.json();
+            renderSrModelList(modelContainer, p, srProjectModels[p.id]);
+          } catch(e) { modelContainer.textContent = 'Failed'; }
+        } else if (!open) {
+          renderSrModelList(modelContainer, p, srProjectModels[p.id] || []);
+        }
+      });
+      row.appendChild(header); row.appendChild(modelContainer);
+      srProjectList.appendChild(row);
+    });
+  }
+
+  function renderSrModelList(container, proj, models) {
+    container.innerHTML = '';
+    models.forEach(m => {
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:4px 8px;font-size:12px;';
+      const furnBtn = makeSrBtn(m, proj, 'furniture', '🪑 Add as Furniture Model');
+      const intBtn  = makeSrBtn(m, proj, 'interior',  '🏗️ Add as Interior Model');
+      row.appendChild(document.createTextNode(m.name.length > 45 ? m.name.slice(0,45)+'…' : m.name));
+      row.appendChild(document.createElement('br'));
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:6px;margin-top:4px;';
+      btnRow.appendChild(furnBtn); btnRow.appendChild(intBtn);
+      row.appendChild(btnRow);
+      container.appendChild(row);
+    });
+  }
+
+  function makeSrBtn(model, proj, role, label) {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-neutral btn-sm';
+    btn.style.cssText = 'font-size:11px;padding:3px 10px;';
+    btn.textContent = label;
+    btn.addEventListener('click', () => {
+      srSelectedEntries.push({ projectId: proj.id, projectName: proj.name, hubId: proj.hub_id, modelUrn: model.urn, modelName: model.name, role });
+      renderSrSelectedModels();
+      srSaveBtn.disabled = srSelectedEntries.length < 1;
+    });
+    return btn;
+  }
+
+  function renderSrSelectedModels() {
+    srModelPairs.innerHTML = '';
+    if (!srSelectedEntries.length) { srSelectedModels.style.display='none'; return; }
+    srSelectedModels.style.display = 'block';
+    srSelectedEntries.forEach((e, i) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg);border-radius:4px;font-size:12px;';
+      const roleTag = document.createElement('span');
+      roleTag.className = 'badge ' + (e.role === 'furniture' ? 'badge-green' : 'badge-yellow');
+      roleTag.textContent = e.role;
+      const info = document.createElement('span');
+      info.style.flex='1';
+      info.textContent = e.projectName + ' — ' + e.modelName;
+      const del = document.createElement('button');
+      del.textContent = '✕'; del.style.cssText='background:none;border:none;cursor:pointer;color:var(--text-light);';
+      del.addEventListener('click', () => { srSelectedEntries.splice(i, 1); renderSrSelectedModels(); });
+      row.appendChild(roleTag); row.appendChild(info); row.appendChild(del);
+      srModelPairs.appendChild(row);
+    });
+    srSaveBtn.disabled = srSelectedEntries.length < 1;
+  }
+
+  srSearch.addEventListener('input', () => renderSrProjectList(srSearch.value));
+
+  srSaveBtn.addEventListener('click', async () => {
+    const name = document.getElementById('sr-name').value.trim();
+    if (!name) { srShowStatus('Please enter a report name.', 'error'); return; }
+    const folderId = document.getElementById('sr-folder').value.trim() || 'root';
+    const intervalDays = parseInt(document.getElementById('sr-interval').value);
+    const reportTypes = [];
+    if (document.getElementById('sr-type-capacity').checked) reportTypes.push('capacity');
+    if (document.getElementById('sr-type-furniture').checked) reportTypes.push('furniture');
+    if (!reportTypes.length) { srShowStatus('Select at least one report type.', 'error'); return; }
+
+    // Group entries into model pairs
+    const models = [];
+    const furnished = srSelectedEntries.filter(e => e.role === 'furniture');
+    const interior  = srSelectedEntries.filter(e => e.role === 'interior');
+    furnished.forEach(f => {
+      const matching = interior.find(i => i.projectId === f.projectId);
+      models.push({
+        label: f.projectName + (matching ? '' : ' (furniture only)'),
+        furniture_urn: f.modelUrn,
+        interior_urn: matching ? matching.modelUrn : '',
+      });
+    });
+    interior.filter(i => !furnished.find(f => f.projectId === i.projectId)).forEach(i => {
+      models.push({ label: i.projectName + ' (interior only)', furniture_urn: '', interior_urn: i.modelUrn });
+    });
+
+    if (!models.length) { srShowStatus('Add at least one model.', 'error'); return; }
+
+    srSaveBtn.disabled = true; srSpinner.style.display='inline-block'; srBtnLabel.textContent='Saving…';
+    try {
+      const res = await fetch('/api/scheduled-reports', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ name, models, report_types: reportTypes, interval_days: intervalDays, drive_folder_id: folderId }),
+      });
+      if (!res.ok) throw new Error((await res.json()).detail);
+      srShowStatus('Report scheduled successfully!', 'success');
+      srSelectedEntries = []; renderSrSelectedModels();
+      document.getElementById('sr-name').value = '';
+      loadSrList();
+    } catch(e) { srShowStatus('Error: '+e.message, 'error'); }
+    finally { srSaveBtn.disabled=false; srSpinner.style.display='none'; srBtnLabel.textContent='Save Report Schedule'; }
+  });
+
+  async function loadSrList() {
+    try {
+      const res = await fetch('/api/scheduled-reports');
+      const reports = await res.json();
+      srListCard.style.display = reports.length ? 'block' : 'none';
+      srList.innerHTML = '';
+      reports.forEach(r => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #f0f0f0;';
+        const info = document.createElement('div');
+        info.innerHTML = '<div style="font-weight:600;font-size:13px">'+esc(r.name)+'</div>'+
+          '<div style="font-size:11px;color:var(--text-mid);margin-top:3px">'+
+          'Every '+r.interval_days+' days · '+r.report_types.join(', ')+' · '+r.models.length+' model(s)</div>'+
+          '<div style="font-size:11px;color:var(--text-light);margin-top:2px">'+
+          'Next: '+(r.next_run ? new Date(r.next_run).toLocaleDateString() : '—')+
+          (r.last_run ? ' · Last: '+new Date(r.last_run).toLocaleDateString() : '')+'</div>';
+        const btns = document.createElement('div');
+        btns.style.cssText = 'display:flex;gap:6px;flex-shrink:0;';
+        const runBtn = document.createElement('button');
+        runBtn.className='btn btn-primary btn-sm'; runBtn.textContent='▶ Run Now';
+        runBtn.addEventListener('click', () => runReportNow(r.id, runBtn));
+        const delBtn = document.createElement('button');
+        delBtn.className='btn btn-neutral btn-sm'; delBtn.textContent='Delete';
+        delBtn.addEventListener('click', async () => {
+          await fetch('/api/scheduled-reports/'+r.id, {method:'DELETE'});
+          loadSrList();
+        });
+        btns.appendChild(runBtn); btns.appendChild(delBtn);
+        row.appendChild(info); row.appendChild(btns);
+        srList.appendChild(row);
+      });
+    } catch(e) {}
+  }
+
+  async function runReportNow(reportId, btn) {
+    btn.disabled=true; btn.textContent='Running…';
+    try {
+      const res = await fetch('/api/scheduled-reports/'+reportId+'/run', {method:'POST'});
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.detail);
+
+      // Download each file as CSV and trigger Drive upload
+      const uploaded = [];
+      for (const file of result.files || []) {
+        // Trigger browser download as fallback
+        const blob = new Blob([file.content], {type:'text/csv'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = file.filename;
+        a.click();
+        uploaded.push(file.filename);
+      }
+
+      const msg = result.errors?.length
+        ? 'Errors: '+result.errors.join('; ')
+        : uploaded.length + ' report(s) downloaded. Upload to Drive via the button below.';
+      srShowStatus(msg, result.errors?.length ? 'error' : 'success');
+
+      // Show Drive upload button for each file
+      if (result.files?.length) {
+        showDriveUploadPrompt(result.files, result.files[0]?.folder_id || 'root');
+      }
+      loadSrList();
+    } catch(e) {
+      srShowStatus('Error: '+e.message, 'error');
+    } finally {
+      btn.disabled=false; btn.textContent='▶ Run Now';
+    }
+  }
+
+  function showDriveUploadPrompt(files, folderId) {
+    const existing = document.getElementById('sr-drive-prompt');
+    if (existing) existing.remove();
+    const div = document.createElement('div');
+    div.id = 'sr-drive-prompt';
+    div.style.cssText = 'margin-top:12px;padding:12px;background:var(--bg);border-radius:6px;border:1px solid var(--border);';
+    div.innerHTML = '<div style="font-size:13px;font-weight:600;margin-bottom:8px">Save to Google Drive</div>'+
+      '<div style="font-size:12px;color:var(--text-mid);margin-bottom:10px">'+files.map(f=>'<div>📄 '+esc(f.filename)+'</div>').join('')+'</div>';
+    const uploadBtn = document.createElement('button');
+    uploadBtn.className='btn btn-primary btn-sm';
+    uploadBtn.textContent = 'Upload to Drive';
+    uploadBtn.addEventListener('click', async () => {
+      uploadBtn.disabled=true; uploadBtn.textContent='Uploading…';
+      try {
+        for (const file of files) {
+          const res = await fetch('/api/drive-upload-execute', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({filename: file.filename, content: file.content, folder_id: folderId})
+          });
+          const d = await res.json();
+          if (d.link) {
+            const link = document.createElement('a');
+            link.href=d.link; link.target='_blank'; link.style.fontSize='12px';
+            link.textContent='View '+file.filename+' in Drive';
+            div.appendChild(document.createElement('br'));
+            div.appendChild(link);
+          }
+        }
+        uploadBtn.textContent='✓ Uploaded';
+      } catch(e) {
+        uploadBtn.textContent='Upload failed'; uploadBtn.disabled=false;
+        srShowStatus('Drive upload error: '+e.message, 'error');
+      }
+    });
+    div.appendChild(uploadBtn);
+    srStatus.parentNode.insertBefore(div, srStatus.nextSibling);
+  }
+
+  // ── Itemize + Viewer ───────────────────────────────────────────────────
+  const itemizeBtn      = document.getElementById('itemize-btn');
+  const viewerPanel     = document.getElementById('viewer-panel');
+  const viewerBackdrop  = document.getElementById('viewer-backdrop');
+  const viewerCloseBtn  = document.getElementById('viewer-close-btn');
+  const viewerOverlay   = document.getElementById('viewer-overlay');
+  const viewerPanelInfo = document.getElementById('viewer-panel-info');
+  const viewerPanelTitle= document.getElementById('viewer-panel-title');
+
+  let itemizeActive = false;
+  let viewerInstance = null;
+  let viewerToken = null;
+  let viewerUrn = null;        // URN used for viewer (prefer interior/arch model)
+  let viewerFurnUrn = null;    // URN of the furniture model (for objectid lookup)
+  let viewerModelLoaded = false;
+
+  function openViewerPanel(row) {
+    viewerPanel.classList.add('open');
+    viewerBackdrop.classList.add('show');
+    viewerPanelInfo.style.display = 'block';
+    viewerPanelInfo.innerHTML =
+      '<strong>' + esc(row['Family'] || '') + '</strong>' +
+      (row['Type'] ? ' &middot; ' + esc(row['Type']) : '') +
+      (row['Level'] ? ' &middot; Level ' + esc(row['Level']) : '') +
+      (row['SFDC_Tag Number'] || row['Type Mark'] ? ' &middot; ' + esc(row['SFDC_Tag Number'] || row['Type Mark']) : '');
+    viewerOverlay.style.display = 'flex';
+    loadViewerAndIsolate(row._objectid, row._externalId);
+  }
+
+  function closeViewerPanel() {
+    viewerPanel.classList.remove('open');
+    viewerBackdrop.classList.remove('show');
+  }
+
+  viewerCloseBtn.addEventListener('click', closeViewerPanel);
+  viewerBackdrop.addEventListener('click', closeViewerPanel);
+
+  async function getViewerToken() {
+    if (viewerToken) return viewerToken;
+    const res = await fetch('/api/viewer-token');
+    const d = await res.json();
+    viewerToken = d.access_token;
+    // Expire token slightly early
+    setTimeout(() => { viewerToken = null; }, (d.expires_in - 60) * 1000);
+    return viewerToken;
+  }
+
+  async function loadViewerAndIsolate(objectid, externalId) {
+    const urn = viewerUrn;
+    if (!urn) { viewerOverlay.style.display = 'none'; return; }
+
+    const encoded = btoa(urn).replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+
+    if (!viewerModelLoaded) {
+      const options = {
+        env: 'AutodeskProduction',
+        api: 'derivativeV2',
+        getAccessToken: async (cb) => { const t = await getViewerToken(); cb(t, 3600); },
+      };
+      Autodesk.Viewing.Initializer(options, () => {
+        const container = document.getElementById('viewer-container');
+        viewerInstance = new Autodesk.Viewing.GuiViewer3D(container, { extensions: [] });
+        viewerInstance.start();
+        Autodesk.Viewing.Document.load('urn:' + encoded, (doc) => {
+          const views = doc.getRoot().getDefaultGeometry();
+          viewerInstance.loadDocumentNode(doc, views).then(() => {
+            viewerModelLoaded = true;
+            viewerOverlay.style.display = 'none';
+            // Small delay to ensure instance tree is fully ready
+            setTimeout(() => isolateElement(objectid), 500);
+          });
+        }, () => {
+          viewerOverlay.innerHTML = '<span style="color:var(--red);font-size:13px;padding:12px">Failed to load model</span>';
+        });
+      });
+    } else {
+      viewerOverlay.style.display = 'none';
+      isolateElement(objectid);
+    }
+  }
+
+  function isolateElement(objectid) {
+    if (!viewerInstance || !viewerModelLoaded) return;
+    const dbId = parseInt(objectid);
+    if (!dbId) return;
+
+    const model = viewerInstance.model;
+
+    // Reset
+    viewerInstance.clearThemingColors(model);
+    viewerInstance.setCutPlanes([]);
+    viewerInstance.showAll();
+    viewerInstance.setGhosting(false);
+    viewerInstance.clearSelection();
+
+    // Orange highlight + selection
+    viewerInstance.setThemingColor(dbId, new THREE.Vector4(1, 0.5, 0, 1), model, true);
+    viewerInstance.select([dbId]);
+
+    // Use fitToView first to get the viewer to the element
+    viewerInstance.fitToView([dbId]);
+
+    // Get bounding box via the viewer's impl layer (most reliable)
+    try {
+      const box = new THREE.Box3();
+      viewerInstance.impl.getObjectTree(function(tree) {
+        tree.enumNodeFragments(dbId, function(fragId) {
+          const fragBox = new THREE.Box3();
+          viewerInstance.impl.getWorldBounds(fragId, fragBox);
+          if (fragBox && !fragBox.isEmpty()) box.union(fragBox);
+        }, true);
+
+        if (!box.isEmpty()) {
+          const pad = 10;
+          viewerInstance.setCutPlanes([
+            { normal: { x:  1, y: 0, z: 0 }, dist: -(box.min.x - pad) },
+            { normal: { x: -1, y: 0, z: 0 }, dist:   box.max.x + pad  },
+            { normal: { x: 0, y:  1, z: 0 }, dist: -(box.min.y - pad) },
+            { normal: { x: 0, y: -1, z: 0 }, dist:   box.max.y + pad  },
+            { normal: { x: 0, y: 0, z:  1 }, dist: -(box.min.z - 0.5) },
+            { normal: { x: 0, y: 0, z: -1 }, dist:   box.max.z + 10   },
+          ]);
+        }
+      });
+    } catch(e) {
+      console.error('[Viewer] crop error:', e);
+    }
+  }
+
+  // Reset viewer when URN changes — use furniture model (objectids match)
+  function resetViewer(furnUrn) {
+    viewerFurnUrn = furnUrn;
+    if (viewerUrn !== furnUrn) {
+      viewerUrn = furnUrn;
+      viewerModelLoaded = false;
+      if (viewerInstance) {
+        try { viewerInstance.finish(); } catch(e) {}
+        viewerInstance = null;
+        document.getElementById('viewer-container').innerHTML =
+          '<div class="viewer-overlay" id="viewer-overlay" style="display:flex"><span class="spinner" style="display:inline-block;border-color:rgba(0,112,210,.3);border-top-color:var(--blue)"></span><span style="font-size:13px;color:var(--text-mid)">Loading viewer…</span></div>';
+      }
+    }
+  }
+
+  // Itemize toggle
+  itemizeBtn.addEventListener('click', () => {
+    itemizeActive = !itemizeActive;
+    itemizeBtn.classList.toggle('active', itemizeActive);
+    itemizeBtn.textContent = itemizeActive ? '✕ Exit Itemize' : '⊞ Itemize Instances';
+    renderTable();
   });
 
   // ── Benchmark ──────────────────────────────────────────────────────────
