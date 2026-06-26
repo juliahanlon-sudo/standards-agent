@@ -12,15 +12,18 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --blue:       #0070d2;
-      --blue-dark:  #005fb2;
-      --blue-light: #e8f4fd;
-      --navy:       #16325c;
-      --text:       #16325c;
-      --text-mid:   #54698d;
-      --text-light: #aeaeae;
-      --border:     #dddbda;
-      --bg:         #f4f6f9;
+      /* Salesforce 2026 Brand Colors */
+      --blue:       #066AFE;   /* Electric Blue 30 — primary */
+      --blue-dark:  #002775;   /* Electric Blue 20 */
+      --blue-deep:  #001E5B;   /* Electric Blue 15 */
+      --blue-light: #EAF5FE;   /* Electric Blue tint */
+      --blue-mid:   #CFE9FE;   /* Mid blue tint */
+      --navy:       #002775;
+      --text:       #001E5B;
+      --text-mid:   #3a5998;
+      --text-light: #8099c0;
+      --border:     #cde0f8;
+      --bg:         #f0f6ff;
       --white:      #ffffff;
       --green:      #027e46;
       --green-bg:   #e3f5e1;
@@ -28,18 +31,18 @@
       --yellow-bg:  #fff3cd;
       --red:        #c23934;
       --red-bg:     #fde8e8;
-      --row-alt:    #f9fbff;
-      --shadow-sm:  0 1px 4px rgba(0,0,0,.1);
-      --radius:     6px;
+      --row-alt:    #f5f9ff;
+      --shadow-sm:  0 1px 4px rgba(0,40,120,.08);
+      --radius:     8px;
     }
 
     body { font-family: 'Salesforce Sans','Helvetica Neue',Arial,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; font-size:14px; }
 
     header {
-      background: linear-gradient(135deg, #032d60 0%, #0070d2 100%);
-      color: white; padding: 0 32px; height: 56px;
+      background: linear-gradient(135deg, #001E5B 0%, #002775 40%, #066AFE 100%);
+      color: white; padding: 0 32px; height: 60px;
       display: flex; align-items: center; justify-content: space-between;
-      box-shadow: 0 2px 6px rgba(0,0,0,.2);
+      box-shadow: 0 3px 12px rgba(0,40,180,.25);
     }
     .header-left { display:flex; align-items:center; gap:12px; }
     .header-logo { width:32px; height:32px; background:rgba(255,255,255,.15); border-radius:8px; display:flex; align-items:center; justify-content:center; }
@@ -48,7 +51,8 @@
 
     .section-label { font-size:11px; font-weight:700; color:var(--text-mid); text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px; }
 
-    .card { background:var(--white); border-radius:var(--radius); box-shadow:var(--shadow-sm); border:1px solid var(--border); padding:20px 24px; margin-bottom:16px; }
+    .card { background:var(--white); border-radius:var(--radius); box-shadow:var(--shadow-sm); border:1px solid var(--border); padding:20px 24px; margin-bottom:16px; transition:box-shadow .2s; }
+    .card:hover { box-shadow:0 2px 10px rgba(6,106,254,.1); }
 
     .setup-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
     .setup-grid .full { grid-column:1/-1; }
@@ -211,7 +215,7 @@
 <main>
 
   <!-- Intro banner -->
-  <div style="background:linear-gradient(135deg,#032d60 0%,#0070d2 100%);border-radius:8px;padding:24px 28px;margin-bottom:16px;color:white;display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;">
+  <div style="background:linear-gradient(135deg,#001E5B 0%,#002775 45%,#066AFE 100%);border-radius:10px;padding:28px 32px;margin-bottom:20px;color:white;display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;box-shadow:0 4px 20px rgba(0,40,180,.2);">
     <div style="flex:1;min-width:260px">
       <div style="font-size:13px;opacity:.9;line-height:1.6;max-width:620px">
         This tool pulls data directly from your Revit models hosted on Forma Cloud — no manual exports required.
@@ -270,12 +274,13 @@
       <button class="tab active" data-type="furniture">Furniture</button>
       <button class="tab" data-type="rooms">Rooms</button>
       <button class="tab" data-type="floors">Floors</button>
-      <button class="tab" data-type="casework">Casework</button>
-      <button class="tab" data-type="finishes">Finishes</button>
+      <button class="tab" data-type="areas">Areas</button>
       <button class="tab" data-type="capacity">Capacity</button>
+      <button class="tab" data-type="casework" disabled title="Coming soon" style="opacity:0.5;cursor:not-allowed">Casework</button>
+      <button class="tab" data-type="finishes" disabled title="Coming soon" style="opacity:0.5;cursor:not-allowed">Finishes</button>
     </div>
     <div style="display:flex;justify-content:flex-end;margin-top:16px;">
-      <button class="btn" id="run-btn" disabled style="background:#e66000;color:white;box-shadow:0 1px 3px rgba(230,96,0,.3);">
+      <button class="btn" id="run-btn" disabled style="background:#066AFE;color:white;box-shadow:0 2px 8px rgba(6,106,254,.35);font-weight:700;letter-spacing:.02em;">
         <span class="spinner" id="spinner"></span>
         <span id="btn-label">Run Schedule</span>
       </button>
@@ -443,6 +448,10 @@
   </div>
 
   <div id="results-area" style="display:none">
+    <!-- Building validation banner -->
+    <div id="building-validation-banner" style="display:none;background:var(--yellow-bg);border:1px solid #f0a500;border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--yellow);">
+      <strong>⚠️ Building Not Found:</strong> <span id="building-validation-text"></span>
+    </div>
     <div class="results-layout">
       <div class="col-manager">
         <h3>Columns</h3>
@@ -465,6 +474,9 @@
           </div>
           <select class="filter-select" id="level-filter" style="display:none">
             <option value="">All Levels</option>
+          </select>
+          <select class="filter-select" id="area-scheme-filter" style="display:none">
+            <option value="">All Area Schemes</option>
           </select>
         </div>
         <div class="table-wrap">
@@ -558,6 +570,7 @@
   const resultsTitle  = document.getElementById('results-title');
   const searchInput   = document.getElementById('search-input');
   const levelFilter   = document.getElementById('level-filter');
+  const areaSchemeFilter = document.getElementById('area-scheme-filter');
   const exportBtn     = document.getElementById('export-btn');
   const airtableBtn   = document.getElementById('airtable-btn');
   const capacityArea  = document.getElementById('capacity-area');
@@ -777,7 +790,7 @@
 
   document.getElementById('tabs').addEventListener('click', e => {
     const tab = e.target.closest('.tab');
-    if (!tab) return;
+    if (!tab || tab.disabled) return;  // Ignore disabled tabs
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     scheduleType = tab.dataset.type;
@@ -873,8 +886,41 @@
       airtableBtn.style.color = '';
       buildColumnManager();
       buildLevelFilter(data.levels || []);
+      buildAreaSchemeFilter(data.area_schemes || []);
       searchInput.value = ''; sortState = { col: null, dir: 'asc' };
       resultsTitle.textContent = cap(scheduleType) + ' Schedule';
+
+      // Handle building validation banner
+      const buildingBanner = document.getElementById('building-validation-banner');
+      const buildingText = document.getElementById('building-validation-text');
+      if (scheduleType === 'furniture' && data.building_validation) {
+        const bv = data.building_validation;
+        if (bv.building_found === false && bv.building_code) {
+          buildingText.textContent = 'Building code "' + bv.building_code + '" not found in Airtable Buildings table.';
+          buildingBanner.style.background = 'var(--yellow-bg)';
+          buildingBanner.style.borderColor = '#f0a500';
+          buildingBanner.style.color = 'var(--yellow)';
+          buildingBanner.style.display = 'block';
+        } else if (bv.building_found === true) {
+          buildingText.textContent = '✓ Building validated: ' + bv.matched_building + ' (' + bv.building_code + ')';
+          buildingBanner.style.background = 'var(--green-bg)';
+          buildingBanner.style.borderColor = 'var(--green)';
+          buildingBanner.style.color = 'var(--green)';
+          buildingBanner.innerHTML = '<strong>✓ Building Validated:</strong> <span id="building-validation-text">' + esc(bv.matched_building) + ' (' + esc(bv.building_code) + ')</span>';
+          buildingBanner.style.display = 'block';
+        } else if (!bv.building_code) {
+          buildingText.textContent = 'No building code found in project name (expected format: ABC01, XYZ02, etc.)';
+          buildingBanner.style.background = 'var(--bg)';
+          buildingBanner.style.borderColor = 'var(--border)';
+          buildingBanner.style.color = 'var(--text-mid)';
+          buildingBanner.style.display = 'block';
+        } else {
+          buildingBanner.style.display = 'none';
+        }
+      } else {
+        buildingBanner.style.display = 'none';
+      }
+
       resultsArea.style.display = 'block';
       renderTable();
     } catch(e) {
@@ -935,18 +981,33 @@
     levelFilter.style.display = levels.length ? '' : 'none';
   }
 
+  function buildAreaSchemeFilter(schemes) {
+    areaSchemeFilter.innerHTML = '<option value="">All Area Schemes</option>';
+    schemes.forEach(s => {
+      const o = document.createElement('option');
+      o.value = s; o.textContent = s;
+      areaSchemeFilter.appendChild(o);
+    });
+    areaSchemeFilter.style.display = schemes.length ? '' : 'none';
+  }
+
   levelFilter.addEventListener('change', renderTable);
+  areaSchemeFilter.addEventListener('change', renderTable);
   searchInput.addEventListener('input', renderTable);
 
   function renderTable() {
     const query = searchInput.value.toLowerCase();
     const level = levelFilter.value;
+    const areaScheme = areaSchemeFilter.value;
     const cols = activeColumns.filter(c => c !== '_validation_color' && c !== '_levels');
 
     let rows = allData.filter(r => {
       if (level) {
         const levelData = r['_levels'] || {};
         if (!(level in levelData)) return false;
+      }
+      if (areaScheme && r['Area Scheme'] !== areaScheme) {
+        return false;
       }
       if (query) return Object.values(r).some(v => String(v).toLowerCase().includes(query));
       return true;
@@ -1046,7 +1107,66 @@
           const badge = document.createElement('span');
           badge.className = 'badge badge-' + color;
           badge.textContent = row[col] ?? '';
+
+          // Add building warning if not matched (only for Active items, not Retired)
+          if (row['_building_match'] === false && color === 'green') {
+            console.log('[UI] Adding building warning for:', row['Family'], row['Frame Tag'], '_building_match:', row['_building_match']);
+            const warn = document.createElement('span');
+            warn.textContent = ' ⚠️';
+            warn.title = 'This item is not approved for this building in Airtable';
+            warn.style.cursor = 'help';
+            badge.appendChild(warn);
+          } else if (color === 'green') {
+            console.log('[UI] No warning for:', row['Family'], row['Frame Tag'], '_building_match:', row['_building_match']);
+          }
+
+          // Add cross-region warning
+          if (row['_is_cross_region'] === true && row['_airtable_region']) {
+            const regionWarn = document.createElement('span');
+            regionWarn.textContent = ' 🌍';
+            regionWarn.title = 'This item is from ' + row['_airtable_region'] + ' region (not your region)';
+            regionWarn.style.cursor = 'help';
+            badge.appendChild(regionWarn);
+          }
+
           td.appendChild(badge);
+        } else if (col === 'Manufacturer' && airtableActive) {
+          // Show manufacturer with warning ONLY when Airtable comparison is active
+          // Debug logging
+          if ((row['Family'] ?? '').includes('BE-01')) {
+            console.log('[DEBUG] BE-01 Manufacturer cell:', {
+              manufacturer: row[col],
+              _manufacturer_match: row['_manufacturer_match'],
+              _airtable_manufacturer: row['_airtable_manufacturer'],
+              airtableActive: airtableActive
+            });
+          }
+          // Only show warning if manufacturer_match is explicitly false (meaning there's a mismatch)
+          const revitMfr = row[col] ?? '';
+
+          if (row['_manufacturer_match'] === false && row['_airtable_manufacturer']) {
+            // Mismatch detected
+            const airtableMfr = row['_airtable_manufacturer'];
+
+            if (!revitMfr || revitMfr.trim() === '') {
+              // Revit is blank - show Airtable value with warning
+              const text = document.createElement('span');
+              text.textContent = '(missing) ⚠️ Should be: ' + airtableMfr;
+              text.title = 'Manufacturer missing in Revit. Should be: ' + airtableMfr;
+              text.style.cursor = 'help';
+              text.style.color = 'var(--red)';
+              td.appendChild(text);
+            } else {
+              // Revit has a value but it's wrong - show Revit value with warning and tooltip
+              td.textContent = revitMfr + ' ⚠️';
+              td.title = 'Does not match Airtable. Expected: ' + airtableMfr;
+              td.style.cursor = 'help';
+              td.style.color = 'var(--red)';
+            }
+          } else {
+            // No mismatch or not in Airtable - show Revit value as-is
+            td.textContent = revitMfr;
+          }
         } else {
           td.textContent = row[col] ?? '';
         }
@@ -1065,25 +1185,34 @@
   airtableBtn.addEventListener('click', () => {
     airtableActive = !airtableActive;
     if (airtableActive) {
-      // Add Frame Tag and Validation Status when Airtable is active
+      // Add Frame Tag, Manufacturer, and Validation Status when Airtable is active
       if (!activeColumns.includes('Frame Tag')) {
         const idx = activeColumns.indexOf('SFDC_Tag Number');
         if (idx >= 0) activeColumns.splice(idx + 1, 0, 'Frame Tag');
         else activeColumns.unshift('Frame Tag');
       }
+      if (!activeColumns.includes('Manufacturer')) {
+        const idx = activeColumns.indexOf('Type');
+        if (idx >= 0) activeColumns.splice(idx + 1, 0, 'Manufacturer');
+        else activeColumns.push('Manufacturer');
+      }
       if (!activeColumns.includes('Validation Status')) activeColumns.push('Validation Status');
       airtableBtn.style.background = 'var(--blue)';
       airtableBtn.style.color = 'white';
       airtableBtn.style.borderColor = 'var(--blue)';
-      const cb = colList.querySelector('input[value="Validation Status"]');
-      if (cb) cb.checked = true;
+      const cbValidation = colList.querySelector('input[value="Validation Status"]');
+      if (cbValidation) cbValidation.checked = true;
+      const cbManufacturer = colList.querySelector('input[value="Manufacturer"]');
+      if (cbManufacturer) cbManufacturer.checked = true;
     } else {
-      activeColumns = activeColumns.filter(c => c !== 'Validation Status' && c !== 'Frame Tag');
+      activeColumns = activeColumns.filter(c => c !== 'Validation Status' && c !== 'Frame Tag' && c !== 'Manufacturer');
       airtableBtn.style.background = '';
       airtableBtn.style.color = '';
       airtableBtn.style.borderColor = '';
-      const cb = colList.querySelector('input[value="Validation Status"]');
-      if (cb) cb.checked = false;
+      const cbValidation = colList.querySelector('input[value="Validation Status"]');
+      if (cbValidation) cbValidation.checked = false;
+      const cbManufacturer = colList.querySelector('input[value="Manufacturer"]');
+      if (cbManufacturer) cbManufacturer.checked = false;
     }
     renderTable();
   });
@@ -1481,7 +1610,9 @@
       (row['Level'] ? ' &middot; Level ' + esc(row['Level']) : '') +
       (row['SFDC_Tag Number'] || row['Type Mark'] ? ' &middot; ' + esc(row['SFDC_Tag Number'] || row['Type Mark']) : '');
     viewerOverlay.style.display = 'flex';
-    loadViewerAndIsolate(row._objectid, row._externalId);
+    console.log('[Viewer] Opening panel for row:', row);
+    console.log('[Viewer] ExternalId type:', typeof row._externalId, 'value:', row._externalId);
+    loadViewerAndIsolate(row._externalId);
   }
 
   function closeViewerPanel() {
@@ -1502,7 +1633,7 @@
     return viewerToken;
   }
 
-  async function loadViewerAndIsolate(objectid, externalId) {
+  async function loadViewerAndIsolate(externalId) {
     const urn = viewerUrn;
     if (!urn) { viewerOverlay.style.display = 'none'; return; }
 
@@ -1524,7 +1655,7 @@
             viewerModelLoaded = true;
             viewerOverlay.style.display = 'none';
             // Small delay to ensure instance tree is fully ready
-            setTimeout(() => isolateElement(objectid), 500);
+            setTimeout(() => isolateElementByExternalId(externalId), 500);
           });
         }, () => {
           viewerOverlay.innerHTML = '<span style="color:var(--red);font-size:13px;padding:12px">Failed to load model</span>';
@@ -1532,56 +1663,200 @@
       });
     } else {
       viewerOverlay.style.display = 'none';
-      isolateElement(objectid);
+      isolateElementByExternalId(externalId);
     }
   }
 
-  function isolateElement(objectid) {
+  function isolateElementByExternalId(externalId) {
     if (!viewerInstance || !viewerModelLoaded) return;
-    const dbId = parseInt(objectid);
+    if (!externalId) {
+      console.error('[Viewer] No externalId provided');
+      return;
+    }
+
+    const model = viewerInstance.model;
+    console.log('[Viewer] Looking up externalId:', externalId);
+    console.log('[Viewer] Model is ready:', model.isLoadDone());
+
+    // Wait for model to be fully loaded (including geometry)
+    const waitForModel = () => {
+      if (!model.isLoadDone()) {
+        console.log('[Viewer] Waiting for model to finish loading...');
+        setTimeout(waitForModel, 200);
+        return;
+      }
+
+      console.log('[Viewer] Model fully loaded, proceeding with isolation');
+
+      // Convert externalId to dbId using the viewer's instance tree
+      model.getExternalIdMapping((idMapping) => {
+        console.log('[Viewer] External ID mapping has', Object.keys(idMapping).length, 'entries');
+
+        const dbId = idMapping[externalId];
+
+        if (!dbId) {
+          console.error('[Viewer] Could not find dbId for externalId:', externalId);
+          viewerPanelInfo.innerHTML += '<br><span style="color:var(--red);font-size:11px">Element not found in model</span>';
+          return;
+        }
+
+        console.log('[Viewer] Found dbId:', dbId, 'for externalId:', externalId);
+
+        // Get element name from tree
+        const tree = model.getData().instanceTree;
+        if (tree) {
+          const name = tree.getNodeName(dbId);
+          console.log('[Viewer] Element name:', name);
+        }
+
+        isolateElement(dbId);
+      });
+    };
+
+    waitForModel();
+  }
+
+  function isolateElement(dbId) {
+    if (!viewerInstance || !viewerModelLoaded) return;
     if (!dbId) return;
 
     const model = viewerInstance.model;
 
-    // Reset
+    console.log('[Viewer] Isolating element dbId:', dbId);
+
+    // Reset viewer state
     viewerInstance.clearThemingColors(model);
     viewerInstance.setCutPlanes([]);
-    viewerInstance.showAll();
-    viewerInstance.setGhosting(false);
     viewerInstance.clearSelection();
+    viewerInstance.showAll();
 
-    // Orange highlight + selection
-    viewerInstance.setThemingColor(dbId, new THREE.Vector4(1, 0.5, 0, 1), model, true);
-    viewerInstance.select([dbId]);
-
-    // Use fitToView first to get the viewer to the element
-    viewerInstance.fitToView([dbId]);
-
-    // Get bounding box via the viewer's impl layer (most reliable)
-    try {
-      const box = new THREE.Box3();
-      viewerInstance.impl.getObjectTree(function(tree) {
-        tree.enumNodeFragments(dbId, function(fragId) {
-          const fragBox = new THREE.Box3();
-          viewerInstance.impl.getWorldBounds(fragId, fragBox);
-          if (fragBox && !fragBox.isEmpty()) box.union(fragBox);
-        }, true);
-
-        if (!box.isEmpty()) {
-          const pad = 10;
-          viewerInstance.setCutPlanes([
-            { normal: { x:  1, y: 0, z: 0 }, dist: -(box.min.x - pad) },
-            { normal: { x: -1, y: 0, z: 0 }, dist:   box.max.x + pad  },
-            { normal: { x: 0, y:  1, z: 0 }, dist: -(box.min.y - pad) },
-            { normal: { x: 0, y: -1, z: 0 }, dist:   box.max.y + pad  },
-            { normal: { x: 0, y: 0, z:  1 }, dist: -(box.min.z - 0.5) },
-            { normal: { x: 0, y: 0, z: -1 }, dist:   box.max.z + 10   },
-          ]);
+    // Wait for fitToView to complete, then apply section box
+    setTimeout(() => {
+      try {
+        const tree = model.getData().instanceTree;
+        if (!tree) {
+          console.error('[Viewer] No instance tree available');
+          return;
         }
-      });
-    } catch(e) {
-      console.error('[Viewer] crop error:', e);
-    }
+
+        // Debug: Check total fragment count in model
+        const fragList = model.getFragmentList();
+        console.log('[Viewer] Total fragments in model:', fragList ? fragList.getCount() : 0);
+
+        // Get node info
+        const nodeName = tree.getNodeName(dbId);
+        console.log('[Viewer] Node name:', nodeName);
+
+        // Check if this node has fragments, if not, collect all descendant nodes
+        let targetDbIds = [];
+        let fragmentMap = new Map();
+
+        // Recursive function to collect all nodes with fragments
+        const collectNodesWithFragments = (nodeId, depth = 0) => {
+          let hasOwnFragments = false;
+
+          tree.enumNodeFragments(nodeId, function(fragId) {
+            hasOwnFragments = true;
+            if (!fragmentMap.has(nodeId)) {
+              fragmentMap.set(nodeId, []);
+              targetDbIds.push(nodeId);
+            }
+            fragmentMap.get(nodeId).push(fragId);
+          }, false);
+
+          if (depth < 10) { // Prevent infinite recursion
+            tree.enumNodeChildren(nodeId, function(childId) {
+              collectNodesWithFragments(childId, depth + 1);
+            }, false);
+          }
+        };
+
+        collectNodesWithFragments(dbId);
+
+        console.log('[Viewer] Found', targetDbIds.length, 'nodes with fragments');
+        console.log('[Viewer] Total fragments collected:', Array.from(fragmentMap.values()).flat().length);
+
+        if (targetDbIds.length === 0) {
+          console.error('[Viewer] No nodes with fragments found. Trying simple isolation fallback...');
+          // Fallback: just isolate the node without cropping
+          viewerInstance.isolate([dbId]);
+          viewerInstance.fitToView([dbId], model, true);
+          viewerOverlay.style.display = 'none';
+          return;
+        }
+
+        // Calculate bounding box for all fragments
+        const box = new THREE.Box3();
+
+        fragmentMap.forEach((fragIds, nodeId) => {
+          fragIds.forEach(fragId => {
+            const fragBox = new THREE.Box3();
+            fragList.getWorldBounds(fragId, fragBox);
+            if (fragBox && !fragBox.isEmpty()) {
+              box.union(fragBox);
+            }
+          });
+        });
+
+        if (box.isEmpty()) {
+          console.error('[Viewer] Bounding box is empty. Fallback to simple isolation.');
+          viewerInstance.isolate(targetDbIds);
+          viewerInstance.fitToView(targetDbIds, model, true);
+          viewerOverlay.style.display = 'none';
+          return;
+        }
+
+        console.log('[Viewer] Bounding box:', box);
+
+        // Calculate padding based on element size
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const padding = Math.max(size.x, size.y, size.z) * 0.5;
+
+        console.log('[Viewer] Element size:', size, 'padding:', padding);
+
+        // Expand box with padding
+        box.expandByScalar(padding);
+
+        // Hide all, then show only target elements
+        viewerInstance.hideAll();
+        viewerInstance.show(targetDbIds);
+
+        // Highlight in orange
+        targetDbIds.forEach(id => {
+          viewerInstance.setThemingColor(id, new THREE.Vector4(1, 0.5, 0, 1), model, true);
+        });
+        viewerInstance.select(targetDbIds);
+
+        // Fit to view
+        viewerInstance.fitToView(targetDbIds, model, true);
+
+        // Apply section planes
+        const cutPlanes = [
+          new THREE.Vector4( 1, 0, 0, -box.min.x),
+          new THREE.Vector4(-1, 0, 0,  box.max.x),
+          new THREE.Vector4( 0, 1, 0, -box.min.y),
+          new THREE.Vector4( 0,-1, 0,  box.max.y),
+          new THREE.Vector4( 0, 0, 1, -box.min.z),
+          new THREE.Vector4( 0, 0,-1,  box.max.z),
+        ];
+
+        viewerInstance.setCutPlanes(cutPlanes);
+        console.log('[Viewer] Applied cut planes');
+
+        // Fit again after cropping
+        setTimeout(() => {
+          viewerInstance.fitToView(targetDbIds, model, true);
+        }, 100);
+
+        // Hide loading overlay
+        viewerOverlay.style.display = 'none';
+
+      } catch(e) {
+        console.error('[Viewer] Error during isolation:', e);
+        viewerOverlay.style.display = 'none';
+      }
+    }, 300);
   }
 
   // Reset viewer when URN changes — use furniture model (objectids match)

@@ -32,6 +32,7 @@ SCHEDULE_CATEGORIES = {
     "floors":     ["Floors"],
     "casework":   ["Casework"],
     "finishes":   ["Rooms"],
+    "areas":      ["Areas", "Area", "Area Plans"],  # Try multiple category names
 }
 
 PRESET_COLUMNS = {
@@ -40,6 +41,7 @@ PRESET_COLUMNS = {
     "floors":    ["Type", "Type Mark", "Level", "Area"],
     "casework":  ["Family & Type", "Count", "Manufacturer", "Finish 1"],
     "finishes":  ["Number", "Name", "Floor Finish", "Wall Finish", "Base Finish", "Ceiling Finish"],
+    "areas":     ["Name", "Area Scheme", "Area", "Level"],
 }
 
 
@@ -258,13 +260,33 @@ def get_schedule(
             raise HTTPException(status_code=400, detail=f"Unknown schedule type: {schedule_type}")
 
         target_categories = SCHEDULE_CATEGORIES[schedule_type]
+        print(f"[SCHEDULE] Running {schedule_type} schedule, looking for categories: {target_categories}")
 
         views = aps.get_model_views(token, urn)
         if not views:
             raise HTTPException(status_code=404, detail="No views found in model")
 
-        # Use master view first; if target categories are empty, search all 3D views
-        guid = get_guid(views)
+        # For areas: look for Area Schedule views
+        if schedule_type == "areas":
+            print(f"[SCHEDULE] Looking for Area Schedule views...")
+            print(f"[SCHEDULE] All views: {[(v.get('name', ''), v.get('role', '')) for v in views]}")
+
+            # Look for schedule views with "area" in the name
+            schedule_views = [v for v in views
+                            if v.get("role") == "2d" and
+                            ("schedule" in v.get("name", "").lower() or "area" in v.get("name", "").lower())]
+
+            if schedule_views:
+                print(f"[SCHEDULE] Found {len(schedule_views)} potential schedule views:")
+                for sv in schedule_views:
+                    print(f"  - {sv.get('name', '')} (role: {sv.get('role', '')})")
+                guid = schedule_views[0]["guid"]
+            else:
+                print(f"[SCHEDULE] No Area Schedule views found. Please create an Area Schedule in Revit and publish the file.")
+                return {"items": [], "levels": [], "available_columns": [], "preset_columns": PRESET_COLUMNS[schedule_type]}
+        else:
+            # Use master view first; if target categories are empty, search all 3D views
+            guid = get_guid(views)
         tree_data = aps.get_object_tree(token, urn, guid)
         top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
         cat_nodes = get_tree_nodes_by_category(top_objects, target_categories)
@@ -275,10 +297,11 @@ def get_schedule(
             for cat in cat_nodes.values()
         ) if cat_nodes else 0
 
-        # For floors/finishes, always search for the best view since master views are often sparse
+        # For floors/finishes/areas, always search for the best view since master views are often sparse
         # For other types, only fall back if master view has very few instances
-        sparse_threshold = 2 if schedule_type in ("floors", "finishes", "casework") else 5
+        sparse_threshold = 2 if schedule_type in ("floors", "finishes", "casework", "areas") else 5
         if not cat_nodes or master_instance_count < sparse_threshold:
+            print(f"[SCHEDULE] Master view has {master_instance_count} instances for {schedule_type}. Searching all views...")
             # Master view has no/sparse data — search all 3D views for the best one
             better_guid = get_best_guid_for_schedule(token, urn, views, target_categories)
             if better_guid != guid:
@@ -288,7 +311,56 @@ def get_schedule(
                 cat_nodes = get_tree_nodes_by_category(top_objects, target_categories)
 
         if not cat_nodes:
-            return {"items": [], "levels": [], "available_columns": [], "preset_columns": PRESET_COLUMNS[schedule_type]}
+            print(f"[SCHEDULE] No categories found for {schedule_type}. Looking for: {target_categories}")
+            all_category_names = [node['name'] for node in top_objects]
+            print(f"[SCHEDULE] Available top-level categories ({len(all_category_names)}): {all_category_names}")
+
+            # For areas: scan properties collection to find Area elements
+            if schedule_type == "areas":
+                print(f"[SCHEDULE] Scanning all properties for Area elements...")
+                props_data = aps.get_properties(token, urn, guid)
+                collection = props_data.get("data", {}).get("collection", [])
+                print(f"[SCHEDULE] Total objects in properties collection: {len(collection)}")
+
+                # Look for objects with Area Scheme parameter - scan ALL objects
+                area_objects = []
+                for obj in collection:
+                    fp = flat_props(obj)
+                    obj_name = obj.get("name", "")
+                    # Check for Area Scheme parameter or "Area" in name
+                    if "Area Scheme" in fp or fp.get("Category", "") == "Areas":
+                        area_objects.append({
+                            "name": obj_name,
+                            "category": fp.get("Category", ""),
+                            "has_area_scheme": "Area Scheme" in fp,
+                            "area_scheme": fp.get("Area Scheme", ""),
+                        })
+
+                print(f"[SCHEDULE] Scanned all {len(collection)} objects")
+                if area_objects:
+                    print(f"[SCHEDULE] Found {len(area_objects)} objects with Area data:")
+                    for ao in area_objects[:5]:
+                        print(f"  - {ao}")
+                else:
+                    print(f"[SCHEDULE] No objects with 'Area Scheme' parameter or Category='Areas' found")
+                    # Show sample object to see what parameters exist
+                    if collection:
+                        sample_obj = collection[0]
+                        sample_fp = flat_props(sample_obj)
+                        print(f"[SCHEDULE] Sample object name: {sample_obj.get('name', '')}")
+                        print(f"[SCHEDULE] Sample object keys: {list(sample_fp.keys())[:20]}")
+                        # Look for any parameter with "area" in the key name
+                        area_params = [k for k in sample_fp.keys() if 'area' in k.lower()]
+                        if area_params:
+                            print(f"[SCHEDULE] Parameters with 'area' in name: {area_params}")
+
+            return {
+                "items": [],
+                "levels": [],
+                "available_columns": [],
+                "preset_columns": PRESET_COLUMNS[schedule_type],
+                "debug_categories": all_category_names,  # Return this for debugging
+            }
 
         props_data = aps.get_properties(token, urn, guid)
         collection = props_data.get("data", {}).get("collection", [])
@@ -363,13 +435,23 @@ def get_schedule(
 
         # Airtable setup for furniture — always fetch so validate button works
         at_records = []
+        building_records = []
+        building_validation = {}
+        building_code = ""
+        manufacturer_mapping = {}
         region = ""
         if schedule_type == "furniture":
             region = at.parse_region(project_name) if project_name else ""
+            building_code = at.parse_building_code(project_name)
             try:
                 at_records = at.fetch_records(region)
+                building_records = at.fetch_buildings(region)
+                building_validation = at.validate_building(project_name, building_records)
+                manufacturer_mapping = at.fetch_manufacturers()
             except Exception:
                 at_records = []
+                building_records = []
+                manufacturer_mapping = {}
 
         # Build a set of type node names from the tree for category matching
         type_node_names = {tn["objectid"]: tn["name"] for tn in all_type_nodes}
@@ -444,6 +526,31 @@ def get_schedule(
                 groups[key]["area_unit"] = str(area_val).split()[-1] if area_val and len(str(area_val).split()) > 1 else ""
                 if groups[key]["param_obj"] is None:
                     groups[key]["param_obj"] = obj
+            elif schedule_type == "areas":
+                # Areas: group by area scheme, name, and level
+                area_val = fp_obj.get("Area", "")
+                area_scheme = fp_obj.get("Area Scheme", "")
+                area_name = fp_obj.get("Name", bn)
+
+                # Skip elements with no area (type/category nodes)
+                if not area_val:
+                    continue
+
+                key = (area_scheme, area_name, level)
+                try:
+                    area_num = float(str(area_val).split()[0]) if area_val else 0.0
+                except (ValueError, IndexError):
+                    area_num = 0.0
+
+                groups[key]["total"] = 1  # Areas are unique, not counted
+                groups[key]["levels"][level] = 1
+                groups[key]["type_node_name"] = bn
+                groups[key]["area_sum"] = area_num
+                groups[key]["area_unit"] = str(area_val).split()[-1] if area_val and len(str(area_val).split()) > 1 else "ft^2"
+                groups[key]["area_scheme"] = area_scheme
+                groups[key]["area_name"] = area_name
+                if groups[key]["param_obj"] is None:
+                    groups[key]["param_obj"] = obj
             else:
                 sfdc_tag_key = fp_obj.get("SFDC_Tag Number", "") or fp_obj.get("SFDC_TAG NUMBER", "") or fp_obj.get("Type Mark", "")
                 # Use objectid as tiebreaker for identical items with no distinguishing data
@@ -506,8 +613,8 @@ def get_schedule(
             family_name = grp["type_node_name"] or param_obj.get("name", "")
             type_name = fp.get("Type Name", "").strip() or family_name
 
-            # For floors: reconstruct area from summed value
-            if schedule_type in ("floors", "finishes"):
+            # For floors/areas: reconstruct area from summed value
+            if schedule_type in ("floors", "finishes", "areas"):
                 level_val = ", ".join(sorted(k for k in grp["levels"].keys() if k))
                 area_sum = grp.get("area_sum", 0.0)
                 area_unit = grp.get("area_unit", "ft^2")
@@ -528,8 +635,12 @@ def get_schedule(
                     row[col] = str(grp["total"])
                 elif col == "Level":
                     row[col] = level_val if level_val is not None else ", ".join(sorted(grp["levels"].keys()))
-                elif col == "Area" and schedule_type in ("floors", "finishes"):
+                elif col == "Area" and schedule_type in ("floors", "finishes", "areas"):
                     row[col] = area_str or fp.get("Area", "")
+                elif col == "Area Scheme" and schedule_type == "areas":
+                    row[col] = grp.get("area_scheme", "") or fp.get("Area Scheme", "")
+                elif col == "Name" and schedule_type == "areas":
+                    row[col] = grp.get("area_name", "") or fp.get("Name", "")
                 elif col in ("SFDC_Tag Number", "Type Mark"):
                     val = fp.get("SFDC_Tag Number", "") or fp.get("SFDC_TAG NUMBER", "") or fp.get("Type Mark", "")
                     # For floors: if Type Mark empty, extract code from Type name
@@ -538,6 +649,14 @@ def get_schedule(
                         m = _re3.search(r'\b([A-Za-z]{2,4}-\d+)\b', type_name)
                         if m:
                             val = m.group(1).upper()
+                    # For furniture: if no tag found, extract from Family name
+                    if not val and schedule_type == "furniture":
+                        import re as _re4
+                        # Look for patterns like CH-08, SS-01, etc. in family name
+                        m = _re4.search(r'\b([A-Za-z]{2,4}-\d+)\b', family_name)
+                        if m:
+                            val = m.group(1).upper()
+                            print(f"[SCHEDULE] Extracted tag '{val}' from family name '{family_name}'")
                     row[col] = val
                 else:
                     row[col] = fp.get(col, "")
@@ -548,12 +667,31 @@ def get_schedule(
                 sfdc_tag = fp.get("SFDC_Tag Number", "") or fp.get("SFDC_TAG NUMBER", "")
                 # Frame Tag in Revit is stored as Type Mark (e.g. CH-08, SS-01)
                 frame_tag = fp.get("Type Mark", "") or fp.get("Frame Tag", "")
+                manufacturer = fp.get("Manufacturer", "")
+
+                # If no tag found, try to extract from Family name BEFORE validation
+                if not sfdc_tag and not frame_tag:
+                    import re as _re5
+                    m = _re5.search(r'\b([A-Za-z]{2,4}-\d+)\b', family_name)
+                    if m:
+                        extracted_tag = m.group(1).upper()
+                        frame_tag = extracted_tag  # Use extracted tag for validation
+                        print(f"[SCHEDULE] Using extracted tag '{extracted_tag}' from family '{family_name}' for validation")
+
                 # Populate Frame Tag column in row if requested
                 if "Frame Tag" in cols:
                     row["Frame Tag"] = frame_tag
-                validation = at.validate_row(sfdc_tag, frame_tag, at_records)
+                validation = at.validate_row(
+                    sfdc_tag, frame_tag, at_records, manufacturer,
+                    building_code, building_records, manufacturer_mapping
+                )
                 row["Validation Status"] = validation["status"]
                 row["_validation_color"] = validation["color"]
+                row["_airtable_manufacturer"] = validation.get("airtable_manufacturer", "")
+                row["_manufacturer_match"] = validation.get("manufacturer_match")
+                row["_building_match"] = validation.get("building_match")
+                row["_airtable_region"] = validation.get("airtable_region", "")
+                row["_is_cross_region"] = validation.get("is_cross_region", False)
 
             # Attach instance list for itemize mode (furniture only)
             if schedule_type == "furniture":
@@ -580,12 +718,24 @@ def get_schedule(
 
         if schedule_type in ("floors", "finishes"):
             rows.sort(key=lambda x: (x.get("Level", ""), x.get("Type Mark", "") or x.get("Type", "")))
+        elif schedule_type == "areas":
+            rows.sort(key=lambda x: (x.get("Area Scheme", ""), x.get("Level", ""), x.get("Name", "")))
         else:
             rows.sort(key=lambda x: (x.get("Family", ""), x.get("Type", "")))
+
         all_levels = set()
+        all_area_schemes = set()
         for grp in groups.values():
             all_levels.update(grp["levels"].keys())
         levels = sorted(l for l in all_levels if l)
+
+        # Collect area schemes for areas schedule type
+        if schedule_type == "areas":
+            for row in rows:
+                scheme = row.get("Area Scheme", "")
+                if scheme:
+                    all_area_schemes.add(scheme)
+        area_schemes = sorted(all_area_schemes)
 
         effective_presets = (
             [("Type Mark" if c == "SFDC_Tag Number" else c) for c in PRESET_COLUMNS[schedule_type]]
@@ -593,12 +743,22 @@ def get_schedule(
             else PRESET_COLUMNS[schedule_type]
         )
 
-        return {
+        result = {
             "items": rows,
             "levels": levels,
             "available_columns": available_columns,
             "preset_columns": effective_presets,
         }
+
+        # Add area schemes for areas schedule type
+        if schedule_type == "areas":
+            result["area_schemes"] = area_schemes
+
+        # Add building validation for furniture schedules
+        if schedule_type == "furniture" and building_validation:
+            result["building_validation"] = building_validation
+
+        return result
 
     except HTTPException:
         raise
