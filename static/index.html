@@ -270,6 +270,7 @@
 
   <div class="card">
     <div class="section-label" style="margin-bottom:12px">Schedule Type</div>
+    <div id="schedule-helper-text" style="font-size:12px;color:var(--text-mid);margin-bottom:12px;line-height:1.5;"></div>
     <div class="tabs" id="tabs">
       <button class="tab active" data-type="furniture">Furniture</button>
       <button class="tab" data-type="rooms">Rooms</button>
@@ -584,6 +585,19 @@
   const fmt = iso => iso ? new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}) : '';
   const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
 
+  function updateScheduleHelperText(type) {
+    const helperEl = document.getElementById('schedule-helper-text');
+    if (!helperEl) return;
+    const tips = {
+      'furniture': '💡 Choose files with <strong>FN</strong>, <strong>Furn</strong>, or <strong>Furniture</strong> in the name',
+      'rooms': '💡 Choose files with <strong>AR</strong>, <strong>Arch</strong>, or <strong>Interior</strong> in the name',
+      'floors': '💡 Choose files with <strong>AR</strong>, <strong>Arch</strong>, or <strong>Interior</strong> in the name',
+      'areas': '💡 Choose the architecture file. Ensure you have created an Area Schedule in Revit.',
+    };
+    helperEl.innerHTML = tips[type] || '';
+    helperEl.style.display = tips[type] ? 'block' : 'none';
+  }
+
   function showStatus(msg, type='info') { statusEl.textContent=msg; statusEl.className=`status ${type}`; statusEl.style.display='block'; }
   function hideStatus() { statusEl.style.display='none'; }
   function setLoading(on) { runBtn.disabled=on; spinner.style.display=on?'inline-block':'none'; btnLabel.textContent=on?'Loading…':'Run Schedule'; runBtn.style.opacity=on?'0.6':'1'; }
@@ -627,21 +641,41 @@
       if (!res.ok) { const e=await res.json(); throw new Error(e.detail||res.statusText); }
       modelData = await res.json();
 
+      // Filter out models that won't have useful data
+      const shouldExcludeModel = (name) => {
+        const lower = name.toLowerCase();
+        return /\b(base|ec|existing|core|shell)\b/.test(lower);
+      };
+
+      let firstValidIdx = -1;
       modelData.forEach((m, i) => {
+        const excluded = shouldExcludeModel(m.name);
+        if (!excluded && firstValidIdx === -1) firstValidIdx = i;
+
         const lbl = document.createElement('label');
-        lbl.className = 'model-item' + (i===0?' selected':'');
+        lbl.className = 'model-item';
+        if (!excluded && i === firstValidIdx) lbl.classList.add('selected');
+        if (excluded) lbl.style.opacity = '0.5';
         lbl.id = 'mi-' + i;
 
         const radio = document.createElement('input');
         radio.type = 'radio'; radio.name = 'model';
         radio.value = m.urn; radio.dataset.idx = i;
-        if (i === 0) radio.checked = true;
+        if (!excluded && i === firstValidIdx) radio.checked = true;
+        if (excluded) radio.disabled = true;
 
         const info = document.createElement('div');
 
         const nameEl = document.createElement('div');
         nameEl.className = 'model-item-name';
         nameEl.textContent = m.name;
+        if (excluded) {
+          const excludedNote = document.createElement('span');
+          excludedNote.textContent = ' (excluded)';
+          excludedNote.style.color = 'var(--text-light)';
+          excludedNote.style.fontSize = '11px';
+          nameEl.appendChild(excludedNote);
+        }
 
         const pathEl = document.createElement('div');
         pathEl.className = 'model-item-path';
@@ -671,6 +705,7 @@
         loadInteriorModels(pid);
       } else {
         modelSection.style.display = 'block';
+        updateScheduleHelperText(scheduleType);
         autoSelectBestModel(scheduleType);
       }
       hideStatus();
@@ -810,6 +845,7 @@
         capacityModelSection.style.display = 'none';
         if (modelData.length > 0) {
           modelSection.style.display = 'block';
+          updateScheduleHelperText(scheduleType);
           autoSelectBestModel(scheduleType);
         }
       }
