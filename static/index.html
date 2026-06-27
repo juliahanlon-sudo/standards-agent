@@ -1553,13 +1553,29 @@
       const defaultOpt = document.createElement('option');
       defaultOpt.value = ''; defaultOpt.textContent = '— Select a project —';
       auditProjectSelect.appendChild(defaultOpt);
+
+      let globalStandardsProject = null;
       projects.forEach(p => {
         const o = document.createElement('option');
         o.value = p.id; o.dataset.hubId = p.hub_id; o.dataset.name = p.name;
         o.textContent = p.name;
         auditProjectSelect.appendChild(o);
+
+        // Check if this is the global standards project
+        if (p.name.toLowerCase().includes('design-standards-globalstandards') ||
+            p.name.toLowerCase().includes('global standards')) {
+          globalStandardsProject = o;
+        }
       });
       auditProjectSelect.disabled = false;
+
+      // Auto-select global standards project if found
+      if (globalStandardsProject) {
+        auditProjectSelect.value = globalStandardsProject.value;
+        // Trigger change event to load models
+        const changeEvent = new Event('change', { bubbles: true });
+        auditProjectSelect.dispatchEvent(changeEvent);
+      }
     } catch(e) {
       auditProjectSelect.textContent = '';
       const errOpt = document.createElement('option');
