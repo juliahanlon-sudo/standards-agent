@@ -495,18 +495,12 @@
   <div id="standards-audit-area" style="display:none">
     <div class="card" id="audit-model-card">
       <div class="section-label">Select Standards File</div>
-      <div class="setup-grid">
-        <div class="field-group">
-          <div class="field-label">Forma Cloud Project</div>
-          <select id="audit-project-select" disabled><option value="">Loading projects…</option></select>
+      <div class="field-group">
+        <div class="field-label">Revit Standards File</div>
+        <div style="font-size:12px;color:var(--text-mid);margin-bottom:8px;line-height:1.5;">
+          💡 Choose the Global Standards file with furniture families
         </div>
-        <div class="full" id="audit-model-section" style="display:none; margin-top:16px;">
-          <div class="field-label">Revit Standards File</div>
-          <div style="font-size:12px;color:var(--text-mid);margin-bottom:8px;line-height:1.5;">
-            💡 Choose the Global Standards file with furniture families
-          </div>
-          <div class="model-list" id="audit-model-list"></div>
-        </div>
+        <div class="model-list" id="audit-model-list"></div>
       </div>
       <div style="display:flex;justify-content:flex-end;margin-top:16px;">
         <button class="btn" id="audit-run-btn" disabled style="background:#066AFE;color:white;box-shadow:0 2px 8px rgba(6,106,254,.35);font-weight:700;letter-spacing:.02em;">
@@ -1514,8 +1508,6 @@
   // ── Standards Audit ────────────────────────────────────────────────────
   const openAuditBtn = document.getElementById('open-audit-btn');
   const auditArea = document.getElementById('standards-audit-area');
-  const auditProjectSelect = document.getElementById('audit-project-select');
-  const auditModelSection = document.getElementById('audit-model-section');
   const auditModelList = document.getElementById('audit-model-list');
   const auditRunBtn = document.getElementById('audit-run-btn');
   const auditSpinner = document.getElementById('audit-spinner');
@@ -1524,7 +1516,7 @@
   const auditResultsArea = document.getElementById('audit-results-area');
   let auditModelData = [];
   let auditCurrentUrn = null;
-  let auditCurrentHubId = '';
+  let auditModelsLoaded = false;
 
   function auditShowStatus(msg, type='info') {
     auditStatus.textContent = msg; auditStatus.className = 'status '+type; auditStatus.style.display='block';
@@ -1539,76 +1531,44 @@
     const isOpen = auditArea.style.display !== 'none';
     auditArea.style.display = isOpen ? 'none' : 'block';
     openAuditBtn.textContent = isOpen ? '▶ Open Standards Audit' : '▼ Close Standards Audit';
-    if (!isOpen && auditProjectSelect.options.length <= 1) {
-      await loadAuditProjects();
+    if (!isOpen && !auditModelsLoaded) {
+      await loadGlobalStandardsModels();
     }
   });
 
-  async function loadAuditProjects() {
+  async function loadGlobalStandardsModels() {
+    auditShowStatus('Finding Global Standards project...', 'info');
     try {
+      // Find the global standards project
       const res = await fetch('/api/projects');
       if (!res.ok) throw new Error(await res.text());
       const projects = await res.json();
-      auditProjectSelect.textContent = '';
-      const defaultOpt = document.createElement('option');
-      defaultOpt.value = ''; defaultOpt.textContent = '— Select a project —';
-      auditProjectSelect.appendChild(defaultOpt);
 
       let globalStandardsProject = null;
-      projects.forEach(p => {
-        const o = document.createElement('option');
-        o.value = p.id; o.dataset.hubId = p.hub_id; o.dataset.name = p.name;
-        o.textContent = p.name;
-        auditProjectSelect.appendChild(o);
-
-        // Check if this is the global standards project (broad search)
+      for (const p of projects) {
         const nameLower = p.name.toLowerCase();
         if (nameLower.includes('globalstandards') ||
             nameLower.includes('global-standards') ||
             nameLower.includes('global standards') ||
             (nameLower.includes('standards') && nameLower.includes('global'))) {
-          globalStandardsProject = o;
+          globalStandardsProject = p;
           console.log('[Audit] Found global standards project:', p.name);
+          break;
         }
-      });
-      auditProjectSelect.disabled = false;
-
-      // Auto-select global standards project if found
-      if (globalStandardsProject) {
-        console.log('[Audit] Auto-selecting project:', globalStandardsProject.textContent);
-        auditProjectSelect.value = globalStandardsProject.value;
-        // Manually trigger the change handler
-        auditProjectSelect.dispatchEvent(new Event('change'));
-      } else {
-        console.log('[Audit] No global standards project found. Available projects:', projects.map(p => p.name));
       }
-    } catch(e) {
-      auditProjectSelect.textContent = '';
-      const errOpt = document.createElement('option');
-      errOpt.value = ''; errOpt.textContent = 'Failed to load';
-      auditProjectSelect.appendChild(errOpt);
-      auditShowStatus('Error loading projects: ' + e.message, 'error');
-    }
-  }
 
-  auditProjectSelect.addEventListener('change', async () => {
-    const pid = auditProjectSelect.value;
-    auditCurrentUrn = null;
-    auditRunBtn.disabled = true;
-    auditModelSection.style.display = 'none';
-    while (auditModelList.firstChild) auditModelList.removeChild(auditModelList.firstChild);
-    auditResultsArea.style.display = 'none';
-    auditHideStatus();
-    if (!pid) return;
+      if (!globalStandardsProject) {
+        throw new Error('Could not find Global Standards project. Available projects: ' + projects.map(p => p.name).join(', '));
+      }
 
-    const opt = auditProjectSelect.selectedOptions[0];
-    auditCurrentHubId = opt.dataset.hubId;
+      // Load models from that project
+      auditShowStatus('Loading models from ' + globalStandardsProject.name + '...', 'info');
+      const modelsRes = await fetch('/api/projects/' + encodeURIComponent(globalStandardsProject.id) + '/models?hub_id=' + encodeURIComponent(globalStandardsProject.hub_id));
+      if (!modelsRes.ok) { const e = await modelsRes.json(); throw new Error(e.detail || modelsRes.statusText); }
+      auditModelData = await modelsRes.json();
 
-    auditShowStatus('Finding models...', 'info');
-    try {
-      const res = await fetch('/api/projects/' + encodeURIComponent(pid) + '/models?hub_id=' + encodeURIComponent(auditCurrentHubId));
-      if (!res.ok) { const e=await res.json(); throw new Error(e.detail||res.statusText); }
-      auditModelData = await res.json();
+      // Render models
+      while (auditModelList.firstChild) auditModelList.removeChild(auditModelList.firstChild);
 
       auditModelData.forEach((m, i) => {
         const lbl = document.createElement('label');
@@ -1644,13 +1604,13 @@
         });
       });
 
-      auditModelSection.style.display = 'block';
       auditRunBtn.disabled = !auditCurrentUrn;
+      auditModelsLoaded = true;
       auditHideStatus();
     } catch(e) {
-      auditShowStatus('Could not find models: ' + e.message, 'error');
+      auditShowStatus('Error: ' + e.message, 'error');
     }
-  });
+  }
 
   auditRunBtn.addEventListener('click', async () => {
     if (!auditCurrentUrn) return;
