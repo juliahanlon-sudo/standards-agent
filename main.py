@@ -1162,6 +1162,8 @@ def standards_audit(urn: str):
 
         # Fetch all Active furniture records from Airtable
         airtable_records = at.fetch_records()
+        print(f"[Standards Audit] Fetched {len(airtable_records)} total Airtable records")
+
         active_standards = {}
         for rec in airtable_records:
             fields = rec.get("fields", {})
@@ -1174,6 +1176,10 @@ def standards_audit(urn: str):
                     "type_name": str(fields.get("Type Name", "")).strip(),
                     "manufacturer": fields.get("Manufacturer Abbreviation (from Manufacturers)", [""])[0],
                 }
+
+        print(f"[Standards Audit] Found {len(active_standards)} Active standards in Airtable")
+        if active_standards:
+            print(f"[Standards Audit] Sample Airtable tags (first 10): {list(active_standards.keys())[:10]}")
 
         # Get families from the Revit file
         views = aps.get_model_views(token, urn)
@@ -1225,12 +1231,18 @@ def standards_audit(urn: str):
             type_nodes, _ = collect_type_and_instance_ids(cat_node)
             all_type_nodes.extend(type_nodes)
 
+        print(f"[Standards Audit] Found {len(all_type_nodes)} type nodes in categories: {list(cat_nodes.keys())}")
+
         # Get properties to extract tags
         props_data = aps.get_properties(token, urn, guid)
         collection = props_data.get("data", {}).get("collection", [])
 
+        print(f"[Standards Audit] Got {len(collection)} property objects")
+
         # Build map of families in Revit with their tags
         revit_families = {}
+        families_without_tags = []
+
         for type_node in all_type_nodes:
             obj_id = type_node["objectid"]
             obj_name = type_node["name"]
@@ -1238,6 +1250,7 @@ def standards_audit(urn: str):
             # Find properties for this type
             obj_props = next((o for o in collection if o.get("objectid") == obj_id), None)
             if not obj_props:
+                print(f"[Standards Audit] No properties found for object {obj_id}: {obj_name}")
                 continue
 
             fp = flat_props(obj_props)
@@ -1261,6 +1274,17 @@ def standards_audit(urn: str):
                     "type_name": type_name,
                     "full_name": obj_name,
                 }
+            else:
+                families_without_tags.append(f"{family_name} - {type_name}")
+
+        print(f"[Standards Audit] Found {len(revit_families)} families with tags")
+        if families_without_tags:
+            print(f"[Standards Audit] {len(families_without_tags)} families without tags (first 10):")
+            for fam in families_without_tags[:10]:
+                print(f"  - {fam}")
+
+        if revit_families:
+            print(f"[Standards Audit] Sample Revit tags (first 10): {list(revit_families.keys())[:10]}")
 
         # Compare: find missing and extra families
         airtable_tags = set(active_standards.keys())
