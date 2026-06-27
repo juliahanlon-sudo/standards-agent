@@ -930,10 +930,15 @@
     scheduleType = tab.dataset.type;
 
     if (scheduleType === 'standards-audit') {
-      // Hide project/model selection for standards audit
-      document.getElementById('project-model-card').style.display = 'none';
-      runBtn.disabled = false;
+      // Show project/model selection for standards audit
+      document.getElementById('project-model-card').style.display = '';
       btnLabel.textContent = 'Run Audit';
+      capacityModelSection.style.display = 'none';
+      if (modelData.length > 0) {
+        modelSection.style.display = 'block';
+        updateScheduleHelperText('furniture'); // Use furniture hint for standards files
+        autoSelectBestModel('furniture');
+      }
     } else if (false) {
       // benchmark is now a standalone section, not a tab
     } else {
@@ -964,33 +969,15 @@
     document.getElementById('standards-audit-area').style.display = 'none';
 
     if (scheduleType === 'standards-audit') {
+      if (!currentUrn) {
+        showStatus('Please select a model to audit.', 'error');
+        setLoading(false);
+        return;
+      }
       try {
-        // Hardcode the Global Standards project URN
-        // You'll need to get this URN from the Global Standards project
-        showStatus('Finding Global Standards file...', 'info');
+        showStatus('Running audit...', 'info');
 
-        // Find "Global Standards" project
-        const projectsRes = await fetch('/api/projects');
-        const projects = await projectsRes.json();
-        const globalStdProj = projects.find(p => p.name.toLowerCase().includes('global standards'));
-
-        if (!globalStdProj) {
-          throw new Error('Could not find "Global Standards" project. Please ensure the project exists and is accessible.');
-        }
-
-        // Get models from Global Standards project
-        const modelsRes = await fetch(`/api/projects/${encodeURIComponent(globalStdProj.id)}/models?hub_id=${encodeURIComponent(globalStdProj.hub_id)}`);
-        const models = await modelsRes.json();
-
-        if (!models || models.length === 0) {
-          throw new Error('No models found in Global Standards project');
-        }
-
-        // Use the first model (or look for specific furniture standards file)
-        const standardsModel = models[0];
-        showStatus('Running audit against: ' + standardsModel.name, 'info');
-
-        const res = await fetch('/api/standards-audit?urn=' + encodeURIComponent(standardsModel.urn));
+        const res = await fetch('/api/standards-audit?urn=' + encodeURIComponent(currentUrn));
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail || res.statusText); }
         const data = await res.json();
 
