@@ -277,7 +277,6 @@
       <button class="tab" data-type="floors">Floors</button>
       <button class="tab" data-type="areas">Areas</button>
       <button class="tab" data-type="capacity">Capacity</button>
-      <button class="tab" data-type="standards-audit">Standards Audit</button>
       <button class="tab" data-type="casework" disabled title="Coming soon" style="opacity:0.5;cursor:not-allowed">Casework</button>
       <button class="tab" data-type="finishes" disabled title="Coming soon" style="opacity:0.5;cursor:not-allowed">Finishes</button>
     </div>
@@ -304,6 +303,21 @@
         <span class="spinner" style="display:inline-block;border-color:rgba(0,112,210,.3);border-top-color:var(--blue)"></span>
         <span style="font-size:13px;color:var(--text-mid)">Loading viewer…</span>
       </div>
+    </div>
+  </div>
+
+  <!-- Standards Audit -->
+  <div class="card" style="border-left:3px solid var(--red);">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;">
+      <div style="flex:1;min-width:280px">
+        <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:6px">Standards Audit</div>
+        <div style="font-size:13px;color:var(--text-mid);line-height:1.5;margin-bottom:12px">
+          Compare your Revit standards container files against Airtable to identify missing families, extra items, and ensure consistency between systems. Select the Global Standards project and the furniture standards file to audit.
+        </div>
+      </div>
+      <button class="btn btn-secondary" id="open-audit-btn" style="white-space:nowrap;flex-shrink:0;align-self:flex-start">
+        &#9654; Open Standards Audit
+      </button>
     </div>
   </div>
 
@@ -492,11 +506,37 @@
   </div>
 
   <!-- Standards Audit -->
+  <!-- Standards Audit Area -->
   <div id="standards-audit-area" style="display:none">
-    <div class="card" style="border-left:3px solid var(--blue);margin-bottom:16px">
-      <div style="display:flex;align-items:flex-start;gap:16px">
-        <div style="flex:1">
-          <h2 style="font-size:15px;font-weight:700;margin-bottom:8px">Standards Audit Summary</h2>
+    <div class="card" id="audit-model-card">
+      <div class="section-label">Select Standards File</div>
+      <div class="setup-grid">
+        <div class="field-group">
+          <div class="field-label">Forma Cloud Project</div>
+          <select id="audit-project-select" disabled><option value="">Loading projects…</option></select>
+        </div>
+        <div class="full" id="audit-model-section" style="display:none; margin-top:16px;">
+          <div class="field-label">Revit Standards File</div>
+          <div style="font-size:12px;color:var(--text-mid);margin-bottom:8px;line-height:1.5;">
+            💡 Choose the Global Standards file with furniture families
+          </div>
+          <div class="model-list" id="audit-model-list"></div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px;">
+        <button class="btn" id="audit-run-btn" disabled style="background:#066AFE;color:white;box-shadow:0 2px 8px rgba(6,106,254,.35);font-weight:700;letter-spacing:.02em;">
+          <span class="spinner" id="audit-spinner"></span>
+          <span id="audit-btn-label">Run Audit</span>
+        </button>
+      </div>
+      <div class="status" id="audit-status"></div>
+    </div>
+
+    <div id="audit-results-area" style="display:none">
+      <div class="card" style="border-left:3px solid var(--blue);margin-bottom:16px">
+        <div style="display:flex;align-items:flex-start;gap:16px">
+          <div style="flex:1">
+            <h2 style="font-size:15px;font-weight:700;margin-bottom:8px">Standards Audit Summary</h2>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px">
             <div style="padding:12px;background:var(--bg);border-radius:6px">
               <div style="font-size:11px;color:var(--text-mid);margin-bottom:4px">Airtable Standards</div>
@@ -586,6 +626,7 @@
           <tbody id="audit-match-body"></tbody>
         </table>
       </div>
+    </div>
     </div>
   </div>
 
@@ -929,18 +970,8 @@
     tab.classList.add('active');
     scheduleType = tab.dataset.type;
 
-    if (scheduleType === 'standards-audit') {
-      // Show project/model selection for standards audit
-      document.getElementById('project-model-card').style.display = '';
-      btnLabel.textContent = 'Run Audit';
-      capacityModelSection.style.display = 'none';
-      if (modelData.length > 0) {
-        modelSection.style.display = 'block';
-        updateScheduleHelperText('furniture'); // Use furniture hint for standards files
-        autoSelectBestModel('furniture');
-      }
-    } else if (false) {
-      // benchmark is now a standalone section, not a tab
+    if (false) {
+      // benchmark and standards-audit are now standalone sections, not tabs
     } else {
       document.getElementById('project-model-card').style.display = '';
       btnLabel.textContent = 'Run Schedule';
@@ -963,103 +994,10 @@
   });
 
   runBtn.addEventListener('click', async () => {
+    if (!currentUrn) return;
     setLoading(true);
     resultsArea.style.display = 'none';
     capacityArea.style.display = 'none';
-    document.getElementById('standards-audit-area').style.display = 'none';
-
-    if (scheduleType === 'standards-audit') {
-      if (!currentUrn) {
-        showStatus('Please select a model to audit.', 'error');
-        setLoading(false);
-        return;
-      }
-      try {
-        showStatus('Running audit...', 'info');
-
-        const res = await fetch('/api/standards-audit?urn=' + encodeURIComponent(currentUrn));
-        if (!res.ok) { const e = await res.json(); throw new Error(e.detail || res.statusText); }
-        const data = await res.json();
-
-        // Update summary
-        document.getElementById('audit-total-airtable').textContent = data.summary.total_airtable_standards;
-        document.getElementById('audit-total-revit').textContent = data.summary.total_revit_families;
-        document.getElementById('audit-matching').textContent = data.summary.matching;
-
-        // Store data for export
-        auditMissingData = data.missing_from_revit;
-        auditExtraData = data.not_in_standards;
-        auditMatchData = data.matching;
-
-        // Render missing from Revit
-        const missingBody = document.getElementById('audit-missing-body');
-        missingBody.innerHTML = '';
-        document.getElementById('audit-missing-count').textContent = data.missing_from_revit.length + ' items';
-        if (data.missing_from_revit.length === 0) {
-          missingBody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-light)">✓ All Airtable standards are present in Revit</td></tr>';
-        } else {
-          data.missing_from_revit.forEach(item => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td>${esc(item.frame_tag)}</td>
-              <td>${esc(item.family_name)}</td>
-              <td>${esc(item.type_name)}</td>
-              <td>${esc(item.manufacturer)}</td>
-            `;
-            missingBody.appendChild(tr);
-          });
-        }
-
-        // Render not in standards
-        const extraBody = document.getElementById('audit-extra-body');
-        extraBody.innerHTML = '';
-        document.getElementById('audit-extra-count').textContent = data.not_in_standards.length + ' items';
-        if (data.not_in_standards.length === 0) {
-          extraBody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--text-light)">✓ All Revit families are in Airtable standards</td></tr>';
-        } else {
-          data.not_in_standards.forEach(item => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td>${esc(item.frame_tag)}</td>
-              <td>${esc(item.family_name)}</td>
-              <td>${esc(item.type_name)}</td>
-            `;
-            extraBody.appendChild(tr);
-          });
-        }
-
-        // Render matching
-        const matchBody = document.getElementById('audit-match-body');
-        matchBody.innerHTML = '';
-        document.getElementById('audit-match-count').textContent = data.matching.length + ' items';
-        if (data.matching.length === 0) {
-          matchBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-light)">No matching items found</td></tr>';
-        } else {
-          data.matching.forEach(item => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td>${esc(item.frame_tag)}</td>
-              <td>${esc(item.airtable_family)}</td>
-              <td>${esc(item.airtable_type)}</td>
-              <td>${esc(item.revit_family)}</td>
-              <td>${esc(item.revit_type)}</td>
-              <td>${esc(item.manufacturer)}</td>
-            `;
-            matchBody.appendChild(tr);
-          });
-        }
-
-        hideStatus();
-        document.getElementById('standards-audit-area').style.display = 'block';
-      } catch(e) {
-        showStatus('Error: ' + e.message, 'error');
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-
-    if (!currentUrn) return;
 
     if (scheduleType === 'capacity') {
       if (!interiorUrn) {
@@ -1568,6 +1506,225 @@
     a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
     a.download = 'matching_standards.csv';
     a.click();
+  });
+
+  // ── Standards Audit ────────────────────────────────────────────────────
+  const openAuditBtn = document.getElementById('open-audit-btn');
+  const auditArea = document.getElementById('standards-audit-area');
+  const auditProjectSelect = document.getElementById('audit-project-select');
+  const auditModelSection = document.getElementById('audit-model-section');
+  const auditModelList = document.getElementById('audit-model-list');
+  const auditRunBtn = document.getElementById('audit-run-btn');
+  const auditSpinner = document.getElementById('audit-spinner');
+  const auditBtnLabel = document.getElementById('audit-btn-label');
+  const auditStatus = document.getElementById('audit-status');
+  const auditResultsArea = document.getElementById('audit-results-area');
+  let auditModelData = [];
+  let auditCurrentUrn = null;
+  let auditCurrentHubId = '';
+
+  function auditShowStatus(msg, type='info') {
+    auditStatus.textContent = msg; auditStatus.className = 'status '+type; auditStatus.style.display='block';
+  }
+  function auditHideStatus() { auditStatus.style.display='none'; }
+  function auditSetLoading(on) {
+    auditRunBtn.disabled = on; auditSpinner.style.display = on?'inline-block':'none';
+    auditBtnLabel.textContent = on?'Running…':'Run Audit'; auditRunBtn.style.opacity = on?'0.6':'1';
+  }
+
+  openAuditBtn.addEventListener('click', async () => {
+    const isOpen = auditArea.style.display !== 'none';
+    auditArea.style.display = isOpen ? 'none' : 'block';
+    openAuditBtn.textContent = isOpen ? '▶ Open Standards Audit' : '▼ Close Standards Audit';
+    if (!isOpen && auditProjectSelect.options.length <= 1) {
+      await loadAuditProjects();
+    }
+  });
+
+  async function loadAuditProjects() {
+    try {
+      const res = await fetch('/api/projects');
+      if (!res.ok) throw new Error(await res.text());
+      const projects = await res.json();
+      auditProjectSelect.textContent = '';
+      const defaultOpt = document.createElement('option');
+      defaultOpt.value = ''; defaultOpt.textContent = '— Select a project —';
+      auditProjectSelect.appendChild(defaultOpt);
+      projects.forEach(p => {
+        const o = document.createElement('option');
+        o.value = p.id; o.dataset.hubId = p.hub_id; o.dataset.name = p.name;
+        o.textContent = p.name;
+        auditProjectSelect.appendChild(o);
+      });
+      auditProjectSelect.disabled = false;
+    } catch(e) {
+      auditProjectSelect.textContent = '';
+      const errOpt = document.createElement('option');
+      errOpt.value = ''; errOpt.textContent = 'Failed to load';
+      auditProjectSelect.appendChild(errOpt);
+      auditShowStatus('Error loading projects: ' + e.message, 'error');
+    }
+  }
+
+  auditProjectSelect.addEventListener('change', async () => {
+    const pid = auditProjectSelect.value;
+    auditCurrentUrn = null;
+    auditRunBtn.disabled = true;
+    auditModelSection.style.display = 'none';
+    while (auditModelList.firstChild) auditModelList.removeChild(auditModelList.firstChild);
+    auditResultsArea.style.display = 'none';
+    auditHideStatus();
+    if (!pid) return;
+
+    const opt = auditProjectSelect.selectedOptions[0];
+    auditCurrentHubId = opt.dataset.hubId;
+
+    auditShowStatus('Finding models...', 'info');
+    try {
+      const res = await fetch('/api/projects/' + encodeURIComponent(pid) + '/models?hub_id=' + encodeURIComponent(auditCurrentHubId));
+      if (!res.ok) { const e=await res.json(); throw new Error(e.detail||res.statusText); }
+      auditModelData = await res.json();
+
+      auditModelData.forEach((m, i) => {
+        const lbl = document.createElement('label');
+        lbl.className = 'model-item' + (i===0?' selected':'');
+        lbl.id = 'audit-mi-' + i;
+
+        const radio = document.createElement('input');
+        radio.type = 'radio'; radio.name = 'audit-model';
+        radio.value = m.urn; radio.dataset.idx = i;
+        if (i === 0) { radio.checked = true; auditCurrentUrn = m.urn; }
+
+        const info = document.createElement('div');
+        const nameEl = document.createElement('div');
+        nameEl.className = 'model-item-name'; nameEl.textContent = m.name;
+        const pathEl = document.createElement('div');
+        pathEl.className = 'model-item-path'; pathEl.textContent = m.path;
+        info.appendChild(nameEl); info.appendChild(pathEl);
+        if (m.last_modified) {
+          const dateEl = document.createElement('div');
+          dateEl.className = 'model-item-date';
+          dateEl.textContent = 'Published ' + fmt(m.last_modified);
+          info.appendChild(dateEl);
+        }
+
+        lbl.appendChild(radio); lbl.appendChild(info);
+        auditModelList.appendChild(lbl);
+
+        radio.addEventListener('change', () => {
+          auditModelList.querySelectorAll('.model-item').forEach(el => el.classList.remove('selected'));
+          document.getElementById('audit-mi-' + i).classList.add('selected');
+          auditCurrentUrn = m.urn;
+          auditRunBtn.disabled = !auditCurrentUrn;
+        });
+      });
+
+      auditModelSection.style.display = 'block';
+      auditRunBtn.disabled = !auditCurrentUrn;
+      auditHideStatus();
+    } catch(e) {
+      auditShowStatus('Could not find models: ' + e.message, 'error');
+    }
+  });
+
+  auditRunBtn.addEventListener('click', async () => {
+    if (!auditCurrentUrn) return;
+    auditSetLoading(true);
+    auditResultsArea.style.display = 'none';
+
+    try {
+      auditShowStatus('Running audit...', 'info');
+
+      const res = await fetch('/api/standards-audit?urn=' + encodeURIComponent(auditCurrentUrn));
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || res.statusText); }
+      const data = await res.json();
+
+      // Update summary
+      document.getElementById('audit-total-airtable').textContent = data.summary.total_airtable_standards;
+      document.getElementById('audit-total-revit').textContent = data.summary.total_revit_families;
+      document.getElementById('audit-matching').textContent = data.summary.matching;
+
+      // Store data for export
+      auditMissingData = data.missing_from_revit;
+      auditExtraData = data.not_in_standards;
+      auditMatchData = data.matching;
+
+      // Render missing from Revit
+      const missingBody = document.getElementById('audit-missing-body');
+      missingBody.textContent = '';
+      document.getElementById('audit-missing-count').textContent = data.missing_from_revit.length + ' items';
+      if (data.missing_from_revit.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 4; td.style.textAlign = 'center'; td.style.padding = '24px';
+        td.style.color = 'var(--text-light)';
+        td.textContent = '✓ All Airtable standards are present in Revit';
+        tr.appendChild(td); missingBody.appendChild(tr);
+      } else {
+        data.missing_from_revit.forEach(item => {
+          const tr = document.createElement('tr');
+          ['frame_tag', 'family_name', 'type_name', 'manufacturer'].forEach(key => {
+            const td = document.createElement('td');
+            td.textContent = item[key] || '';
+            tr.appendChild(td);
+          });
+          missingBody.appendChild(tr);
+        });
+      }
+
+      // Render not in standards
+      const extraBody = document.getElementById('audit-extra-body');
+      extraBody.textContent = '';
+      document.getElementById('audit-extra-count').textContent = data.not_in_standards.length + ' items';
+      if (data.not_in_standards.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 3; td.style.textAlign = 'center'; td.style.padding = '24px';
+        td.style.color = 'var(--text-light)';
+        td.textContent = '✓ All Revit families are in Airtable standards';
+        tr.appendChild(td); extraBody.appendChild(tr);
+      } else {
+        data.not_in_standards.forEach(item => {
+          const tr = document.createElement('tr');
+          ['frame_tag', 'family_name', 'type_name'].forEach(key => {
+            const td = document.createElement('td');
+            td.textContent = item[key] || '';
+            tr.appendChild(td);
+          });
+          extraBody.appendChild(tr);
+        });
+      }
+
+      // Render matching
+      const matchBody = document.getElementById('audit-match-body');
+      matchBody.textContent = '';
+      document.getElementById('audit-match-count').textContent = data.matching.length + ' items';
+      if (data.matching.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 6; td.style.textAlign = 'center'; td.style.padding = '24px';
+        td.style.color = 'var(--text-light)';
+        td.textContent = 'No matching items found';
+        tr.appendChild(td); matchBody.appendChild(tr);
+      } else {
+        data.matching.forEach(item => {
+          const tr = document.createElement('tr');
+          ['frame_tag', 'airtable_family', 'airtable_type', 'revit_family', 'revit_type', 'manufacturer'].forEach(key => {
+            const td = document.createElement('td');
+            td.textContent = item[key] || '';
+            tr.appendChild(td);
+          });
+          matchBody.appendChild(tr);
+        });
+      }
+
+      auditHideStatus();
+      auditResultsArea.style.display = 'block';
+    } catch(e) {
+      auditShowStatus('Error: ' + e.message, 'error');
+    } finally {
+      auditSetLoading(false);
+    }
   });
 
   // ── Scheduled Reports ──────────────────────────────────────────────────
