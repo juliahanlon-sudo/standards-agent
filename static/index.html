@@ -1571,11 +1571,11 @@
       const allowedModels = auditModelData.filter(m => {
         const name = m.name.toLowerCase();
         return name.includes('salesforce-archived-furniture-r24') ||
-               name.includes('salesforce-furniture-container');
+               name.includes('salesforce-furniture-container-r24');
       });
 
       if (allowedModels.length === 0) {
-        throw new Error('Could not find Salesforce-Archived-Furniture-R24 or Salesforce-Furniture-Container.R24 in project');
+        throw new Error('Could not find Salesforce-Archived-Furniture-R24 or Salesforce-Furniture-Container-R24 in project');
       }
 
       console.log('[Audit] Filtered to', allowedModels.length, 'standards files:', allowedModels.map(m => m.name));
