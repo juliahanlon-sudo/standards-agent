@@ -1181,14 +1181,43 @@ def standards_audit(urn: str):
             raise HTTPException(status_code=400, detail="No views found in model")
 
         target_categories = SCHEDULE_CATEGORIES["furniture"]
-        guid = get_best_guid_for_schedule(token, urn, views, target_categories)
 
+        # Try multiple views to find furniture
+        cat_nodes = None
+        guid = None
+
+        # First try the best guid
+        guid = get_best_guid_for_schedule(token, urn, views, target_categories)
         tree_data = aps.get_object_tree(token, urn, guid)
         top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
         cat_nodes = get_tree_nodes_by_category(top_objects, target_categories)
 
+        # If no furniture found, try all 3D views
         if not cat_nodes:
-            raise HTTPException(status_code=400, detail="No furniture found in model")
+            for view in views:
+                if view.get("role") == "3d":
+                    guid = view["guid"]
+                    tree_data = aps.get_object_tree(token, urn, guid)
+                    top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
+                    cat_nodes = get_tree_nodes_by_category(top_objects, target_categories)
+                    if cat_nodes:
+                        break
+
+        # If still no furniture, try looking for "Furniture" or "Casework" categories
+        if not cat_nodes:
+            # Try expanded category list
+            expanded_categories = ["Furniture", "Furniture Systems", "Casework", "Specialty Equipment"]
+            for view in views:
+                if view.get("role") == "3d":
+                    guid = view["guid"]
+                    tree_data = aps.get_object_tree(token, urn, guid)
+                    top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
+                    cat_nodes = get_tree_nodes_by_category(top_objects, expanded_categories)
+                    if cat_nodes:
+                        break
+
+        if not cat_nodes:
+            raise HTTPException(status_code=400, detail="No furniture found in model. Make sure the model contains Furniture or Furniture Systems categories.")
 
         # Collect all type nodes (families/types)
         all_type_nodes = []
