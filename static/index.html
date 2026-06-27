@@ -1561,20 +1561,26 @@
         o.textContent = p.name;
         auditProjectSelect.appendChild(o);
 
-        // Check if this is the global standards project
-        if (p.name.toLowerCase().includes('design-standards-globalstandards') ||
-            p.name.toLowerCase().includes('global standards')) {
+        // Check if this is the global standards project (broad search)
+        const nameLower = p.name.toLowerCase();
+        if (nameLower.includes('globalstandards') ||
+            nameLower.includes('global-standards') ||
+            nameLower.includes('global standards') ||
+            (nameLower.includes('standards') && nameLower.includes('global'))) {
           globalStandardsProject = o;
+          console.log('[Audit] Found global standards project:', p.name);
         }
       });
       auditProjectSelect.disabled = false;
 
       // Auto-select global standards project if found
       if (globalStandardsProject) {
+        console.log('[Audit] Auto-selecting project:', globalStandardsProject.textContent);
         auditProjectSelect.value = globalStandardsProject.value;
-        // Trigger change event to load models
-        const changeEvent = new Event('change', { bubbles: true });
-        auditProjectSelect.dispatchEvent(changeEvent);
+        // Manually trigger the change handler
+        auditProjectSelect.dispatchEvent(new Event('change'));
+      } else {
+        console.log('[Audit] No global standards project found. Available projects:', projects.map(p => p.name));
       }
     } catch(e) {
       auditProjectSelect.textContent = '';
