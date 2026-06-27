@@ -277,6 +277,7 @@
       <button class="tab" data-type="floors">Floors</button>
       <button class="tab" data-type="areas">Areas</button>
       <button class="tab" data-type="capacity">Capacity</button>
+      <button class="tab" data-type="standards-audit">Standards Audit</button>
       <button class="tab" data-type="casework" disabled title="Coming soon" style="opacity:0.5;cursor:not-allowed">Casework</button>
       <button class="tab" data-type="finishes" disabled title="Coming soon" style="opacity:0.5;cursor:not-allowed">Finishes</button>
     </div>
@@ -486,6 +487,104 @@
             <tbody id="table-body"></tbody>
           </table>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Standards Audit -->
+  <div id="standards-audit-area" style="display:none">
+    <div class="card" style="border-left:3px solid var(--blue);margin-bottom:16px">
+      <div style="display:flex;align-items:flex-start;gap:16px">
+        <div style="flex:1">
+          <h2 style="font-size:15px;font-weight:700;margin-bottom:8px">Standards Audit Summary</h2>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px">
+            <div style="padding:12px;background:var(--bg);border-radius:6px">
+              <div style="font-size:11px;color:var(--text-mid);margin-bottom:4px">Airtable Standards</div>
+              <div style="font-size:20px;font-weight:700;color:var(--blue)" id="audit-total-airtable">—</div>
+            </div>
+            <div style="padding:12px;background:var(--bg);border-radius:6px">
+              <div style="font-size:11px;color:var(--text-mid);margin-bottom:4px">Revit Families</div>
+              <div style="font-size:20px;font-weight:700;color:var(--blue)" id="audit-total-revit">—</div>
+            </div>
+            <div style="padding:12px;background:var(--bg);border-radius:6px">
+              <div style="font-size:11px;color:var(--text-mid);margin-bottom:4px">Matching</div>
+              <div style="font-size:20px;font-weight:700;color:var(--green)" id="audit-matching">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Missing from Revit -->
+    <div class="results-card" style="margin-bottom:16px">
+      <div class="results-header">
+        <h2>⚠️ Missing from Revit</h2>
+        <div class="results-meta">
+          <span class="results-count" id="audit-missing-count">0 items</span>
+          <button class="btn btn-neutral btn-sm" id="audit-missing-export">&#8595; Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Frame Tag</th>
+              <th>Family Name</th>
+              <th>Type Name</th>
+              <th>Manufacturer</th>
+            </tr>
+          </thead>
+          <tbody id="audit-missing-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Not in Standards -->
+    <div class="results-card" style="margin-bottom:16px">
+      <div class="results-header">
+        <h2>❌ In Revit but Not in Standards</h2>
+        <div class="results-meta">
+          <span class="results-count" id="audit-extra-count">0 items</span>
+          <button class="btn btn-neutral btn-sm" id="audit-extra-export">&#8595; Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Frame Tag</th>
+              <th>Family Name</th>
+              <th>Type Name</th>
+            </tr>
+          </thead>
+          <tbody id="audit-extra-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Matching -->
+    <div class="results-card">
+      <div class="results-header">
+        <h2>✓ Matching Standards</h2>
+        <div class="results-meta">
+          <span class="results-count" id="audit-match-count">0 items</span>
+          <button class="btn btn-neutral btn-sm" id="audit-match-export">&#8595; Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Frame Tag</th>
+              <th>Airtable Family</th>
+              <th>Airtable Type</th>
+              <th>Revit Family</th>
+              <th>Revit Type</th>
+              <th>Manufacturer</th>
+            </tr>
+          </thead>
+          <tbody id="audit-match-body"></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -830,10 +929,16 @@
     tab.classList.add('active');
     scheduleType = tab.dataset.type;
 
-    if (false) {
+    if (scheduleType === 'standards-audit') {
+      // Hide project/model selection for standards audit
+      document.getElementById('project-model-card').style.display = 'none';
+      runBtn.disabled = false;
+      btnLabel.textContent = 'Run Audit';
+    } else if (false) {
       // benchmark is now a standalone section, not a tab
     } else {
       document.getElementById('project-model-card').style.display = '';
+      btnLabel.textContent = 'Run Schedule';
       if (scheduleType === 'capacity') {
         modelSection.style.display = 'none';
         if (projectSelect.value && modelData.length > 0) {
@@ -853,10 +958,121 @@
   });
 
   runBtn.addEventListener('click', async () => {
-    if (!currentUrn) return;
     setLoading(true);
     resultsArea.style.display = 'none';
     capacityArea.style.display = 'none';
+    document.getElementById('standards-audit-area').style.display = 'none';
+
+    if (scheduleType === 'standards-audit') {
+      try {
+        // Hardcode the Global Standards project URN
+        // You'll need to get this URN from the Global Standards project
+        showStatus('Finding Global Standards file...', 'info');
+
+        // Find "Global Standards" project
+        const projectsRes = await fetch('/api/projects');
+        const projects = await projectsRes.json();
+        const globalStdProj = projects.find(p => p.name.toLowerCase().includes('global standards'));
+
+        if (!globalStdProj) {
+          throw new Error('Could not find "Global Standards" project. Please ensure the project exists and is accessible.');
+        }
+
+        // Get models from Global Standards project
+        const modelsRes = await fetch(`/api/projects/${encodeURIComponent(globalStdProj.id)}/models?hub_id=${encodeURIComponent(globalStdProj.hub_id)}`);
+        const models = await modelsRes.json();
+
+        if (!models || models.length === 0) {
+          throw new Error('No models found in Global Standards project');
+        }
+
+        // Use the first model (or look for specific furniture standards file)
+        const standardsModel = models[0];
+        showStatus('Running audit against: ' + standardsModel.name, 'info');
+
+        const res = await fetch('/api/standards-audit?urn=' + encodeURIComponent(standardsModel.urn));
+        if (!res.ok) { const e = await res.json(); throw new Error(e.detail || res.statusText); }
+        const data = await res.json();
+
+        // Update summary
+        document.getElementById('audit-total-airtable').textContent = data.summary.total_airtable_standards;
+        document.getElementById('audit-total-revit').textContent = data.summary.total_revit_families;
+        document.getElementById('audit-matching').textContent = data.summary.matching;
+
+        // Store data for export
+        auditMissingData = data.missing_from_revit;
+        auditExtraData = data.not_in_standards;
+        auditMatchData = data.matching;
+
+        // Render missing from Revit
+        const missingBody = document.getElementById('audit-missing-body');
+        missingBody.innerHTML = '';
+        document.getElementById('audit-missing-count').textContent = data.missing_from_revit.length + ' items';
+        if (data.missing_from_revit.length === 0) {
+          missingBody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-light)">✓ All Airtable standards are present in Revit</td></tr>';
+        } else {
+          data.missing_from_revit.forEach(item => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${esc(item.frame_tag)}</td>
+              <td>${esc(item.family_name)}</td>
+              <td>${esc(item.type_name)}</td>
+              <td>${esc(item.manufacturer)}</td>
+            `;
+            missingBody.appendChild(tr);
+          });
+        }
+
+        // Render not in standards
+        const extraBody = document.getElementById('audit-extra-body');
+        extraBody.innerHTML = '';
+        document.getElementById('audit-extra-count').textContent = data.not_in_standards.length + ' items';
+        if (data.not_in_standards.length === 0) {
+          extraBody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:24px;color:var(--text-light)">✓ All Revit families are in Airtable standards</td></tr>';
+        } else {
+          data.not_in_standards.forEach(item => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${esc(item.frame_tag)}</td>
+              <td>${esc(item.family_name)}</td>
+              <td>${esc(item.type_name)}</td>
+            `;
+            extraBody.appendChild(tr);
+          });
+        }
+
+        // Render matching
+        const matchBody = document.getElementById('audit-match-body');
+        matchBody.innerHTML = '';
+        document.getElementById('audit-match-count').textContent = data.matching.length + ' items';
+        if (data.matching.length === 0) {
+          matchBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-light)">No matching items found</td></tr>';
+        } else {
+          data.matching.forEach(item => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${esc(item.frame_tag)}</td>
+              <td>${esc(item.airtable_family)}</td>
+              <td>${esc(item.airtable_type)}</td>
+              <td>${esc(item.revit_family)}</td>
+              <td>${esc(item.revit_type)}</td>
+              <td>${esc(item.manufacturer)}</td>
+            `;
+            matchBody.appendChild(tr);
+          });
+        }
+
+        hideStatus();
+        document.getElementById('standards-audit-area').style.display = 'block';
+      } catch(e) {
+        showStatus('Error: ' + e.message, 'error');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (!currentUrn) return;
 
     if (scheduleType === 'capacity') {
       if (!interiorUrn) {
@@ -1329,6 +1545,41 @@
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
     a.download = 'capacity_breakdown.csv';
+    a.click();
+  });
+
+  // ── Standards Audit Export ───────────────────────────────────────────
+  let auditMissingData = [];
+  let auditExtraData = [];
+  let auditMatchData = [];
+
+  document.getElementById('audit-missing-export').addEventListener('click', () => {
+    const cols = ['Frame Tag', 'Family Name', 'Type Name', 'Manufacturer'];
+    const csv = [cols, ...auditMissingData.map(r => cols.map(c => '"' + String(r[c.toLowerCase().replace(/ /g, '_')]??'').replace(/"/g,'""') + '"'))]
+      .map(r => r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+    a.download = 'missing_from_revit.csv';
+    a.click();
+  });
+
+  document.getElementById('audit-extra-export').addEventListener('click', () => {
+    const cols = ['Frame Tag', 'Family Name', 'Type Name'];
+    const csv = [cols, ...auditExtraData.map(r => cols.map(c => '"' + String(r[c.toLowerCase().replace(/ /g, '_')]??'').replace(/"/g,'""') + '"'))]
+      .map(r => r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+    a.download = 'not_in_standards.csv';
+    a.click();
+  });
+
+  document.getElementById('audit-match-export').addEventListener('click', () => {
+    const cols = ['Frame Tag', 'Airtable Family', 'Airtable Type', 'Revit Family', 'Revit Type', 'Manufacturer'];
+    const csv = [cols, ...auditMatchData.map(r => cols.map(c => '"' + String(r[c.toLowerCase().replace(/ /g, '_')]??'').replace(/"/g,'""') + '"'))]
+      .map(r => r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+    a.download = 'matching_standards.csv';
     a.click();
   });
 

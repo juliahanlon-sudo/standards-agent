@@ -1149,4 +1149,144 @@ def get_viewer_token():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/standards-audit")
+def standards_audit(urn: str):
+    """
+    Compare families in the Global Standards Revit file against Airtable standards.
+    Returns a comparison showing:
+    - Families in Airtable (Active status) that are missing from the Revit file
+    - Families in the Revit file that are not in Airtable or have wrong status
+    """
+    try:
+        token = get_token()
+
+        # Fetch all Active furniture records from Airtable
+        airtable_records = at.fetch_records()
+        active_standards = {}
+        for rec in airtable_records:
+            fields = rec.get("fields", {})
+            status = str(fields.get("Status", "")).strip()
+            frame_tag = str(fields.get("Frame Tag", "")).strip()
+            if status.lower() == "active" and frame_tag:
+                active_standards[frame_tag.lower()] = {
+                    "frame_tag": frame_tag,
+                    "family_name": str(fields.get("Family Name", "")).strip(),
+                    "type_name": str(fields.get("Type Name", "")).strip(),
+                    "manufacturer": fields.get("Manufacturer Abbreviation (from Manufacturers)", [""])[0],
+                }
+
+        # Get families from the Revit file
+        views = aps.get_model_views(token, urn)
+        if not views:
+            raise HTTPException(status_code=400, detail="No views found in model")
+
+        target_categories = SCHEDULE_CATEGORIES["furniture"]
+        guid = get_best_guid_for_schedule(token, urn, views, target_categories)
+
+        tree_data = aps.get_object_tree(token, urn, guid)
+        top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
+        cat_nodes = get_tree_nodes_by_category(top_objects, target_categories)
+
+        if not cat_nodes:
+            raise HTTPException(status_code=400, detail="No furniture found in model")
+
+        # Collect all type nodes (families/types)
+        all_type_nodes = []
+        for cat_node in cat_nodes.values():
+            type_nodes, _ = collect_type_and_instance_ids(cat_node)
+            all_type_nodes.extend(type_nodes)
+
+        # Get properties to extract tags
+        props_data = aps.get_properties(token, urn, guid)
+        collection = props_data.get("data", {}).get("collection", [])
+
+        # Build map of families in Revit with their tags
+        revit_families = {}
+        for type_node in all_type_nodes:
+            obj_id = type_node["objectid"]
+            obj_name = type_node["name"]
+
+            # Find properties for this type
+            obj_props = next((o for o in collection if o.get("objectid") == obj_id), None)
+            if not obj_props:
+                continue
+
+            fp = flat_props(obj_props)
+            family_name = fp.get("Family", "")
+            type_name = fp.get("Type", "")
+            sfdc_tag = fp.get("SFDC_Tag Number", "")
+            type_mark = fp.get("Type Mark", "")
+
+            # Extract tag from Family name if not found in parameters
+            tag = sfdc_tag or type_mark
+            if not tag:
+                import re as _re4
+                m = _re4.search(r'\b([A-Za-z]{2,4}-\d+)\b', family_name)
+                if m:
+                    tag = m.group(1).upper()
+
+            if tag:
+                revit_families[tag.lower()] = {
+                    "tag": tag,
+                    "family_name": family_name,
+                    "type_name": type_name,
+                    "full_name": obj_name,
+                }
+
+        # Compare: find missing and extra families
+        airtable_tags = set(active_standards.keys())
+        revit_tags = set(revit_families.keys())
+
+        missing_from_revit = []
+        for tag in (airtable_tags - revit_tags):
+            at_data = active_standards[tag]
+            missing_from_revit.append({
+                "frame_tag": at_data["frame_tag"],
+                "family_name": at_data["family_name"],
+                "type_name": at_data["type_name"],
+                "manufacturer": at_data["manufacturer"],
+                "status": "Missing from Revit",
+            })
+
+        in_revit_not_standard = []
+        for tag in (revit_tags - airtable_tags):
+            rv_data = revit_families[tag]
+            in_revit_not_standard.append({
+                "frame_tag": rv_data["tag"],
+                "family_name": rv_data["family_name"],
+                "type_name": rv_data["type_name"],
+                "status": "Not in Airtable Standards",
+            })
+
+        in_both = []
+        for tag in (airtable_tags & revit_tags):
+            at_data = active_standards[tag]
+            rv_data = revit_families[tag]
+            in_both.append({
+                "frame_tag": at_data["frame_tag"],
+                "airtable_family": at_data["family_name"],
+                "airtable_type": at_data["type_name"],
+                "revit_family": rv_data["family_name"],
+                "revit_type": rv_data["type_name"],
+                "manufacturer": at_data["manufacturer"],
+                "status": "Match",
+            })
+
+        return {
+            "summary": {
+                "total_airtable_standards": len(airtable_tags),
+                "total_revit_families": len(revit_tags),
+                "missing_from_revit": len(missing_from_revit),
+                "not_in_standards": len(in_revit_not_standard),
+                "matching": len(in_both),
+            },
+            "missing_from_revit": sorted(missing_from_revit, key=lambda x: x["frame_tag"]),
+            "not_in_standards": sorted(in_revit_not_standard, key=lambda x: x["frame_tag"]),
+            "matching": sorted(in_both, key=lambda x: x["frame_tag"]),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
