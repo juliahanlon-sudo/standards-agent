@@ -1160,22 +1160,33 @@ def standards_audit(urn: str):
     try:
         token = get_token()
 
-        # Fetch all Active furniture records from Airtable
+        # Fetch all furniture records from Airtable (all statuses)
         airtable_records = at.fetch_records()
         print(f"[Standards Audit] Fetched {len(airtable_records)} total Airtable records")
 
         active_standards = {}
+        all_standards = {}  # Track all records including retired
         for rec in airtable_records:
             fields = rec.get("fields", {})
             status = str(fields.get("Status", "")).strip()
             frame_tag = str(fields.get("Frame Tag", "")).strip()
-            if status.lower() == "active" and frame_tag:
-                active_standards[frame_tag.lower()] = {
-                    "frame_tag": frame_tag,
-                    "family_name": str(fields.get("Family Name", "")).strip(),
-                    "type_name": str(fields.get("Type Name", "")).strip(),
-                    "manufacturer": fields.get("Manufacturer Abbreviation (from Manufacturers)", [""])[0],
-                }
+            if not frame_tag:
+                continue
+
+            record_data = {
+                "frame_tag": frame_tag,
+                "family_name": str(fields.get("Family Name", "")).strip(),
+                "type_name": str(fields.get("Type Name", "")).strip(),
+                "manufacturer": fields.get("Manufacturer Abbreviation (from Manufacturers)", [""])[0],
+                "status": status,
+            }
+
+            # Store all records
+            all_standards[frame_tag.lower()] = record_data
+
+            # Store only Active records
+            if status.lower() == "active":
+                active_standards[frame_tag.lower()] = record_data
 
         print(f"[Standards Audit] Found {len(active_standards)} Active standards in Airtable")
         if active_standards:
@@ -1302,14 +1313,27 @@ def standards_audit(urn: str):
             })
 
         in_revit_not_standard = []
+        retired_in_revit = []
+
         for tag in (revit_tags - airtable_tags):
             rv_data = revit_families[tag]
-            in_revit_not_standard.append({
-                "frame_tag": rv_data["tag"],
-                "family_name": rv_data["family_name"],
-                "type_name": rv_data["type_name"],
-                "status": "Not in Airtable Standards",
-            })
+            # Check if this item exists in Airtable but is retired
+            if tag in all_standards:
+                at_data = all_standards[tag]
+                retired_in_revit.append({
+                    "frame_tag": rv_data["tag"],
+                    "family_name": rv_data["family_name"],
+                    "type_name": rv_data["type_name"],
+                    "airtable_status": at_data["status"],
+                    "status": "Retired in Airtable",
+                })
+            else:
+                in_revit_not_standard.append({
+                    "frame_tag": rv_data["tag"],
+                    "family_name": rv_data["family_name"],
+                    "type_name": rv_data["type_name"],
+                    "status": "Not in Airtable",
+                })
 
         in_both = []
         for tag in (airtable_tags & revit_tags):
@@ -1331,10 +1355,12 @@ def standards_audit(urn: str):
                 "total_revit_families": len(revit_tags),
                 "missing_from_revit": len(missing_from_revit),
                 "not_in_standards": len(in_revit_not_standard),
+                "retired_in_revit": len(retired_in_revit),
                 "matching": len(in_both),
             },
             "missing_from_revit": sorted(missing_from_revit, key=lambda x: x["frame_tag"]),
             "not_in_standards": sorted(in_revit_not_standard, key=lambda x: x["frame_tag"]),
+            "retired_in_revit": sorted(retired_in_revit, key=lambda x: x["frame_tag"]),
             "matching": sorted(in_both, key=lambda x: x["frame_tag"]),
         }
 

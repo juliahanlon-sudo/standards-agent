@@ -554,10 +554,34 @@
       </div>
     </div>
 
+    <!-- Retired in Revit -->
+    <div class="results-card" style="margin-bottom:16px">
+      <div class="results-header">
+        <h2>🚫 Retired Items in Container File</h2>
+        <div class="results-meta">
+          <span class="results-count" id="audit-retired-count">0 items</span>
+          <button class="btn btn-neutral btn-sm" id="audit-retired-export">&#8595; Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Frame Tag</th>
+              <th>Family Name</th>
+              <th>Type Name</th>
+              <th>Airtable Status</th>
+            </tr>
+          </thead>
+          <tbody id="audit-retired-body"></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- Not in Standards -->
     <div class="results-card" style="margin-bottom:16px">
       <div class="results-header">
-        <h2>❌ In Revit but Not in Standards</h2>
+        <h2>❌ In Revit but Not in Airtable</h2>
         <div class="results-meta">
           <span class="results-count" id="audit-extra-count">0 items</span>
           <button class="btn btn-neutral btn-sm" id="audit-extra-export">&#8595; Export CSV</button>
@@ -1469,6 +1493,7 @@
   // ── Standards Audit Export ───────────────────────────────────────────
   let auditMissingData = [];
   let auditExtraData = [];
+  let auditRetiredData = [];
   let auditMatchData = [];
 
   document.getElementById('audit-missing-export').addEventListener('click', () => {
@@ -1481,13 +1506,23 @@
     a.click();
   });
 
+  document.getElementById('audit-retired-export').addEventListener('click', () => {
+    const cols = ['Frame Tag', 'Family Name', 'Type Name', 'Airtable Status'];
+    const csv = [cols, ...auditRetiredData.map(r => cols.map(c => '"' + String(r[c.toLowerCase().replace(/ /g, '_')]??'').replace(/"/g,'""') + '"'))]
+      .map(r => r.join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+    a.download = 'retired_in_revit.csv';
+    a.click();
+  });
+
   document.getElementById('audit-extra-export').addEventListener('click', () => {
     const cols = ['Frame Tag', 'Family Name', 'Type Name'];
     const csv = [cols, ...auditExtraData.map(r => cols.map(c => '"' + String(r[c.toLowerCase().replace(/ /g, '_')]??'').replace(/"/g,'""') + '"'))]
       .map(r => r.join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
-    a.download = 'not_in_standards.csv';
+    a.download = 'not_in_airtable.csv';
     a.click();
   });
 
@@ -1641,6 +1676,7 @@
       // Store data for export
       auditMissingData = data.missing_from_revit;
       auditExtraData = data.not_in_standards;
+      auditRetiredData = data.retired_in_revit || [];
       auditMatchData = data.matching;
 
       // Render missing from Revit
@@ -1663,6 +1699,33 @@
             tr.appendChild(td);
           });
           missingBody.appendChild(tr);
+        });
+      }
+
+      // Render retired in Revit
+      const retiredBody = document.getElementById('audit-retired-body');
+      retiredBody.textContent = '';
+      document.getElementById('audit-retired-count').textContent = auditRetiredData.length + ' items';
+      if (auditRetiredData.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 4; td.style.textAlign = 'center'; td.style.padding = '24px';
+        td.style.color = 'var(--text-light)';
+        td.textContent = '✓ No retired items found in container file';
+        tr.appendChild(td); retiredBody.appendChild(tr);
+      } else {
+        auditRetiredData.forEach(item => {
+          const tr = document.createElement('tr');
+          ['frame_tag', 'family_name', 'type_name', 'airtable_status'].forEach(key => {
+            const td = document.createElement('td');
+            td.textContent = item[key] || '';
+            if (key === 'airtable_status') {
+              td.style.color = 'var(--red)';
+              td.style.fontWeight = '600';
+            }
+            tr.appendChild(td);
+          });
+          retiredBody.appendChild(tr);
         });
       }
 
