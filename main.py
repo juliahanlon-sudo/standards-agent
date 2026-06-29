@@ -30,6 +30,7 @@ SCHEDULE_CATEGORIES = {
     "furniture":  ["Furniture", "Furniture Systems"],
     "rooms":      ["Rooms"],
     "floors":     ["Floors"],
+    "doors":      ["Doors"],
     "casework":   ["Casework"],
     "finishes":   ["Rooms"],
     "areas":      ["Areas", "Area", "Area Plans"],  # Try multiple category names
@@ -39,6 +40,7 @@ PRESET_COLUMNS = {
     "furniture": ["SFDC_Tag Number", "SFDC_Seat Count", "Family", "Type", "Count", "Manufacturer"],
     "rooms":     ["Number", "Name", "Area", "Level", "Occupancy"],
     "floors":    ["Type", "Type Mark", "Level", "Area"],
+    "doors":     ["Mark", "Family", "Type", "Level", "From Room", "To Room", "Width", "Height", "Fire Rating"],
     "casework":  ["Family & Type", "Count", "Manufacturer", "Finish 1"],
     "finishes":  ["Number", "Name", "Floor Finish", "Wall Finish", "Base Finish", "Ceiling Finish"],
     "areas":     ["Name", "Area Scheme", "Area", "Level"],
