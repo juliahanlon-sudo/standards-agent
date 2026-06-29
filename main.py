@@ -40,7 +40,7 @@ PRESET_COLUMNS = {
     "furniture": ["SFDC_Tag Number", "SFDC_Seat Count", "Family", "Type", "Count", "Manufacturer"],
     "rooms":     ["Number", "Name", "Area", "Level", "Occupancy"],
     "floors":    ["Type", "Type Mark", "Level", "Area"],
-    "doors":     ["Mark", "Family", "Type", "Level", "From Room: Number", "To Room: Number", "Width", "Height", "Fire Rating"],
+    "doors":     ["Mark", "Family", "Type", "Level", "Width", "Height", "Fire Rating", "Hardware Group", "Configuration", "Comments"],
     "casework":  ["Family & Type", "Count", "Manufacturer", "Finish 1"],
     "finishes":  ["Number", "Name", "Floor Finish", "Wall Finish", "Base Finish", "Ceiling Finish"],
     "areas":     ["Name", "Area Scheme", "Area", "Level"],
@@ -606,22 +606,12 @@ def get_schedule(
             cols = [("Type Mark" if c == "SFDC_Tag Number" else c) for c in cols]
 
         rows = []
-        first_door_logged = False
         for type_id, grp in groups.items():
             param_obj = grp["param_obj"]
             if not param_obj:
                 continue
 
             fp = flat_props(param_obj)
-
-            # Debug: log first door's properties
-            if schedule_type == "doors" and not first_door_logged:
-                print(f"[DOORS DEBUG] First door properties: {list(fp.keys())}")
-                print(f"[DOORS DEBUG] Room-related properties:")
-                for key in fp.keys():
-                    if 'room' in key.lower():
-                        print(f"  - {key}: {fp[key]}")
-                first_door_logged = True
             family_name = grp["type_node_name"] or param_obj.get("name", "")
             type_name = fp.get("Type Name", "").strip() or family_name
 
@@ -669,13 +659,6 @@ def get_schedule(
                         if m:
                             val = m.group(1).upper()
                             print(f"[SCHEDULE] Extracted tag '{val}' from family name '{family_name}'")
-                    row[col] = val
-                elif col in ("From Room: Number", "To Room: Number") and schedule_type == "doors":
-                    # Try multiple variations of room parameters
-                    val = (fp.get(col, "") or
-                           fp.get(col.replace(": Number", ": Name"), "") or
-                           fp.get(col.replace(": Number", ""), "") or
-                           fp.get(col.split(":")[0].strip(), ""))
                     row[col] = val
                 else:
                     row[col] = fp.get(col, "")
