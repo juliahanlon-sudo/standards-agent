@@ -40,7 +40,7 @@ PRESET_COLUMNS = {
     "furniture": ["SFDC_Tag Number", "SFDC_Seat Count", "Family", "Type", "Count", "Manufacturer"],
     "rooms":     ["Number", "Name", "Area", "Level", "Occupancy"],
     "floors":    ["Type", "Type Mark", "Level", "Area"],
-    "doors":     ["Mark", "Family", "Type", "Level", "Width", "Height", "Fire Rating", "Hardware Group", "Configuration", "Comments"],
+    "doors":     ["Mark", "Family", "Type", "Level", "From Room", "To Room", "Width", "Height", "Fire Rating", "Hardware Group", "Configuration", "Comments"],
     "casework":  ["Family & Type", "Count", "Manufacturer", "Finish 1"],
     "finishes":  ["Number", "Name", "Floor Finish", "Wall Finish", "Base Finish", "Ceiling Finish"],
     "areas":     ["Name", "Area Scheme", "Area", "Level"],
@@ -554,10 +554,17 @@ def get_schedule(
                 if groups[key]["param_obj"] is None:
                     groups[key]["param_obj"] = obj
             else:
-                sfdc_tag_key = fp_obj.get("SFDC_Tag Number", "") or fp_obj.get("SFDC_TAG NUMBER", "") or fp_obj.get("Type Mark", "")
-                # Use objectid as tiebreaker for identical items with no distinguishing data
-                obj_id_key = obj.get("objectid", "") if not sfdc_tag_key and not type_name else ""
-                key = (bn, type_name, sfdc_tag_key or obj_id_key)
+                # For doors, group by Mark (each door is unique)
+                if schedule_type == "doors":
+                    door_mark = fp_obj.get("Mark", "")
+                    # Use objectid as fallback for doors without marks
+                    obj_id_key = obj.get("objectid", "") if not door_mark else ""
+                    key = (bn, type_name, door_mark or obj_id_key)
+                else:
+                    sfdc_tag_key = fp_obj.get("SFDC_Tag Number", "") or fp_obj.get("SFDC_TAG NUMBER", "") or fp_obj.get("Type Mark", "")
+                    # Use objectid as tiebreaker for identical items with no distinguishing data
+                    obj_id_key = obj.get("objectid", "") if not sfdc_tag_key and not type_name else ""
+                    key = (bn, type_name, sfdc_tag_key or obj_id_key)
                 groups[key]["total"] += 1
                 groups[key]["levels"][level] += 1
                 # Look up the true family name from the tree hierarchy
@@ -584,6 +591,9 @@ def get_schedule(
                         "externalId": obj.get("externalId", ""),
                         "level": level,
                     }
+                    # For doors, also store Mark for spatial matching
+                    if schedule_type == "doors":
+                        inst_entry["mark"] = fp_obj.get("Mark", "")
                     groups[key]["instances"].append(inst_entry)
                     # Also add to the tree-family-keyed group if different (handles WK sub-parts)
                     if family_from_tree and family_from_tree != bn:
@@ -695,8 +705,8 @@ def get_schedule(
                 row["_airtable_region"] = validation.get("airtable_region", "")
                 row["_is_cross_region"] = validation.get("is_cross_region", False)
 
-            # Attach instance list for itemize mode (furniture only)
-            if schedule_type == "furniture":
+            # Attach instance list for itemize mode (furniture and doors)
+            if schedule_type in ("furniture", "doors"):
                 row["_instances"] = grp.get("instances", [])
 
             rows.append(row)
@@ -744,6 +754,130 @@ def get_schedule(
             if schedule_type == "furniture" and not has_sfdc_tag
             else PRESET_COLUMNS[schedule_type]
         )
+
+        # Add spatial room-to-room data for doors
+        if schedule_type == "doors":
+            print(f"[DOORS] Calculating room-to-room relationships...")
+            print(f"[DOORS] Number of door rows: {len(rows)}")
+            try:
+                print(f"[DOORS] Importing spatial_join module...")
+                import spatial_join as sj
+                print(f"[DOORS] Calling get_door_rooms with URN: {urn[:50]}...")
+                # Use same URN for both doors and rooms (both in architecture model)
+                door_rooms = sj.get_door_rooms(token, urn, urn)
+                print(f"[DOORS] get_door_rooms returned, found {len(door_rooms)} door-room assignments")
+                if door_rooms:
+                    print(f"[DOORS] Sample assignments: {list(door_rooms.items())[:3]}")
+
+                # Build mark-to-room and externalId-to-room mappings for easier lookup
+                mark_to_rooms = {}
+                extid_to_rooms = {}
+                doors_without_marks = 0
+                for dbid, room_data in door_rooms.items():
+                    mark = room_data.get("mark", "")
+                    ext_id = room_data.get("external_id", "")
+                    if mark:
+                        mark_to_rooms[mark] = room_data
+                    else:
+                        doors_without_marks += 1
+                    if ext_id:
+                        extid_to_rooms[ext_id] = room_data
+                print(f"[DOORS] Built mark-to-rooms mapping with {len(mark_to_rooms)} entries")
+                print(f"[DOORS] Built externalId-to-rooms mapping with {len(extid_to_rooms)} entries")
+                print(f"[DOORS] {doors_without_marks} spatial doors had no Mark")
+                if mark_to_rooms:
+                    print(f"[DOORS] Sample marks: {list(mark_to_rooms.keys())[:5]}")
+
+                # Collect all door marks from Properties API for comparison
+                all_property_marks = []
+                doors_without_marks = 0
+                for row in rows:
+                    instances = row.get("_instances", [])
+                    for inst in instances:
+                        mark = inst.get("mark", "")
+                        if mark:
+                            all_property_marks.append(mark)
+                        else:
+                            doors_without_marks += 1
+                print(f"[DOORS] Properties API has {len(all_property_marks)} doors with marks")
+                print(f"[DOORS] Properties API has {doors_without_marks} doors WITHOUT marks")
+                print(f"[DOORS] Sample property marks: {all_property_marks[:10]}")
+
+                # Find marks in Properties but not in spatial data
+                property_marks_set = set(all_property_marks)
+                spatial_marks_set = set(mark_to_rooms.keys())
+                missing_spatial = property_marks_set - spatial_marks_set
+                if missing_spatial:
+                    print(f"[DOORS] WARNING: {len(missing_spatial)} doors in Properties API have no spatial data")
+                    print(f"[DOORS] Missing marks: {list(missing_spatial)[:20]}")
+
+                # Match door instances to spatial data
+                # For grouped doors (multiple of same type), aggregate room names
+                matched_count = 0
+                for row in rows:
+                    instances = row.get("_instances", [])
+                    print(f"[DOORS] Row '{row.get('Family', 'Unknown')}' has {len(instances)} instances")
+                    if instances:
+                        sample_ids = [inst.get("objectid") for inst in instances[:3]]
+                        sample_ext = [inst.get("externalId") for inst in instances[:3]]
+                        print(f"[DOORS]   Sample objectids: {sample_ids}")
+                        print(f"[DOORS]   Sample externalIds: {sample_ext}")
+                    if not instances:
+                        # Still add empty columns
+                        row["From Room"] = ""
+                        row["To Room"] = ""
+                        row["From Number"] = ""
+                        row["To Number"] = ""
+                        continue
+
+                    # Collect all room assignments for this door type
+                    from_rooms = []
+                    to_rooms = []
+                    from_numbers = []
+                    to_numbers = []
+
+                    # Match each door instance by its Mark property, or externalId as fallback
+                    for inst in instances:
+                        inst_mark = inst.get("mark", "")
+                        inst_extid = inst.get("externalId", "")
+
+                        dr = None
+                        if inst_mark and inst_mark in mark_to_rooms:
+                            dr = mark_to_rooms[inst_mark]
+                        elif inst_extid and inst_extid in extid_to_rooms:
+                            dr = extid_to_rooms[inst_extid]
+
+                        if dr:
+                            matched_count += 1
+                            fr = dr.get("from_room", "")
+                            tr = dr.get("to_room", "")
+                            fn = dr.get("from_number", "")
+                            tn = dr.get("to_number", "")
+                            if fr and fr not in from_rooms:
+                                from_rooms.append(fr)
+                            if tr and tr not in to_rooms:
+                                to_rooms.append(tr)
+                            if fn and fn not in from_numbers:
+                                from_numbers.append(fn)
+                            if tn and tn not in to_numbers:
+                                to_numbers.append(tn)
+
+                    # For types with multiple instances, show all unique room names
+                    row["From Room"] = ", ".join(from_rooms) if from_rooms else ""
+                    row["To Room"] = ", ".join(to_rooms) if to_rooms else ""
+                    row["From Number"] = ", ".join(from_numbers) if from_numbers else ""
+                    row["To Number"] = ", ".join(to_numbers) if to_numbers else ""
+
+                print(f"[DOORS] Matched {matched_count} door instances to rooms")
+
+                # Add From Room and To Room to available columns
+                available_columns.extend(["From Room", "To Room", "From Number", "To Number"])
+                available_columns = sorted(set(available_columns))
+
+            except Exception as e:
+                print(f"[DOORS] Error calculating room relationships: {e}")
+                import traceback
+                traceback.print_exc()
 
         result = {
             "items": rows,

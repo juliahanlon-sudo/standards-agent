@@ -268,3 +268,213 @@ def get_room_seats(token, furniture_urn, interior_urn):
                 break
 
     return assignments
+
+
+def get_door_rooms(token, door_urn, interior_urn):
+    """
+    Calculate which rooms each door connects to using spatial analysis.
+    Downloads SVF fragment data from both models and matches door positions to room boundaries.
+    Returns: dict mapping door_dbid → {"from_room": str, "to_room": str, "from_number": str, "to_number": str}
+    """
+    print(f"[DOOR_SPATIAL] Starting door-room spatial analysis")
+    # ── Interior: room bboxes ──────────────────────────────────────────────
+    _, int_frag_urn = _get_svf_frag_urn(token, interior_urn, "New Construction")
+    if not int_frag_urn:
+        print(f"[DOOR_SPATIAL] No interior fragment URN found")
+        return {}
+
+    int_frags = list(svf.parse_fragments(svf._download(token, interior_urn, int_frag_urn)))
+
+    int_sdb_path = svf.download_sdb(token, interior_urn)
+    conn_i = sqlite3.connect(int_sdb_path)
+    try:
+        room_ents = {
+            r[0] for r in conn_i.execute(
+                "SELECT e.entity_id FROM _objects_eav e "
+                "JOIN _objects_val v ON e.value_id=v.id "
+                "WHERE e.attribute_id=13 AND v.value='Revit Rooms'"
+            ).fetchall()
+        }
+        name_attr = conn_i.execute(
+            "SELECT id FROM _objects_attr WHERE name='Name' AND category='Identity Data' LIMIT 1"
+        ).fetchone()
+        if not name_attr:
+            name_attr = conn_i.execute(
+                "SELECT id FROM _objects_attr WHERE name='Name' LIMIT 1"
+            ).fetchone()
+        num_attr = conn_i.execute(
+            "SELECT id FROM _objects_attr WHERE name='Number' AND category='Identity Data' LIMIT 1"
+        ).fetchone()
+        if not name_attr:
+            return {}
+
+        room_names = {
+            r[0]: r[1]
+            for r in conn_i.execute(
+                f"SELECT e.entity_id, v.value FROM _objects_eav e "
+                f"JOIN _objects_val v ON e.value_id=v.id "
+                f"WHERE e.attribute_id={name_attr[0]}"
+            ).fetchall()
+        }
+        room_numbers = {}
+        if num_attr:
+            room_numbers = {
+                r[0]: r[1]
+                for r in conn_i.execute(
+                    f"SELECT e.entity_id, v.value FROM _objects_eav e "
+                    f"JOIN _objects_val v ON e.value_id=v.id "
+                    f"WHERE e.attribute_id={num_attr[0]}"
+                ).fetchall()
+            }
+    finally:
+        conn_i.close()
+        os.unlink(int_sdb_path)
+
+    # Build room fragment list with bboxes
+    room_bboxes = []
+    for f in int_frags:
+        if f.dbid not in room_ents:
+            continue
+        bbox = f.bbox
+        if len(bbox) < 6 or any(math.isnan(v) or abs(v) > 1e8 for v in bbox):
+            continue
+        name = room_names.get(f.dbid, "")
+        if not name:
+            continue
+        number = room_numbers.get(f.dbid, "")
+        room_bboxes.append({
+            "name": name,
+            "number": number,
+            "bbox": bbox,
+        })
+    print(f"[DOOR_SPATIAL] Found {len(room_bboxes)} rooms")
+
+    # ── Door: positions ────────────────────────────────────────────────────
+    _, door_frag_urn = _get_svf_frag_urn(token, door_urn, "New Construction")
+    if not door_frag_urn:
+        print(f"[DOOR_SPATIAL] No door fragment URN found")
+        return {}
+
+    door_frags = list(svf.parse_fragments(svf._download(token, door_urn, door_frag_urn)))
+    print(f"[DOOR_SPATIAL] Loaded {len(door_frags)} door fragments")
+
+    door_sdb_path = svf.download_sdb(token, door_urn)
+    conn_d = sqlite3.connect(door_sdb_path)
+    try:
+        door_ents = {
+            r[0] for r in conn_d.execute(
+                "SELECT e.entity_id FROM _objects_eav e "
+                "JOIN _objects_val v ON e.value_id=v.id "
+                "WHERE e.attribute_id=13 AND v.value='Revit Doors'"
+            ).fetchall()
+        }
+        print(f"[DOOR_SPATIAL] Found {len(door_ents)} door entities in database")
+
+        # Get door marks and external IDs to use for matching
+        mark_attr = conn_d.execute(
+            "SELECT id FROM _objects_attr WHERE name='Mark' LIMIT 1"
+        ).fetchone()
+        door_marks = {}
+        if mark_attr:
+            door_marks = {
+                r[0]: r[1]
+                for r in conn_d.execute(
+                    f"SELECT e.entity_id, v.value FROM _objects_eav e "
+                    f"JOIN _objects_val v ON e.value_id=v.id "
+                    f"WHERE e.attribute_id={mark_attr[0]}"
+                ).fetchall()
+            }
+            print(f"[DOOR_SPATIAL] Found marks for {len(door_marks)} doors")
+
+        # Get external IDs as fallback for doors without marks
+        ext_id_attr = conn_d.execute(
+            "SELECT id FROM _objects_attr WHERE name='externalId' LIMIT 1"
+        ).fetchone()
+        door_external_ids = {}
+        if ext_id_attr:
+            door_external_ids = {
+                r[0]: r[1]
+                for r in conn_d.execute(
+                    f"SELECT e.entity_id, v.value FROM _objects_eav e "
+                    f"JOIN _objects_val v ON e.value_id=v.id "
+                    f"WHERE e.attribute_id={ext_id_attr[0]}"
+                ).fetchall()
+            }
+            print(f"[DOOR_SPATIAL] Found externalIds for {len(door_external_ids)} doors")
+    finally:
+        conn_d.close()
+        os.unlink(door_sdb_path)
+
+    # ── Spatial join: door center point → rooms ────────────────────────────
+    # For each door, find which room(s) its center point is near
+    # Doors typically sit on the boundary between two rooms
+    door_assignments = {}
+    unmatched_doors = 0
+    skipped_not_door = 0
+    skipped_no_transform = 0
+    skipped_bad_position = 0
+
+    for f in door_frags:
+        if f.dbid not in door_ents:
+            skipped_not_door += 1
+            continue
+        if not f.transform:
+            skipped_no_transform += 1
+            continue
+
+        tx, ty, tz = svf.get_translation(f.transform)
+        if math.isnan(tx) or math.isnan(ty) or math.isnan(tz):
+            skipped_bad_position += 1
+            continue
+
+        # Find all rooms whose bboxes contain or are very close to the door position
+        nearby_rooms = []
+        for room in room_bboxes:
+            bbox = room["bbox"]
+            # Check if door position is inside room bbox (with tolerance)
+            tolerance = 2.0  # feet - doors sit on walls, so need larger tolerance
+            if (bbox[0] - tolerance <= tx <= bbox[3] + tolerance and
+                bbox[1] - tolerance <= ty <= bbox[4] + tolerance and
+                bbox[2] - tolerance <= tz <= bbox[5] + tolerance):
+                # Calculate distance from door to room center
+                room_cx = (bbox[0] + bbox[3]) / 2
+                room_cy = (bbox[1] + bbox[4]) / 2
+                room_cz = (bbox[2] + bbox[5]) / 2
+                dist = math.sqrt((tx - room_cx)**2 + (ty - room_cy)**2 + (tz - room_cz)**2)
+                nearby_rooms.append((dist, room))
+
+        # Sort by distance and take up to 2 closest rooms
+        nearby_rooms.sort(key=lambda x: x[0])
+        room_matches = [r[1] for r in nearby_rooms[:2]]
+
+        if not room_matches:
+            unmatched_doors += 1
+
+        if len(room_matches) >= 2:
+            door_assignments[f.dbid] = {
+                "from_room": room_matches[0]["name"],
+                "to_room": room_matches[1]["name"],
+                "from_number": room_matches[0]["number"],
+                "to_number": room_matches[1]["number"],
+                "mark": door_marks.get(f.dbid, ""),
+                "external_id": door_external_ids.get(f.dbid, ""),
+                "room_count": 2,
+            }
+        elif len(room_matches) == 1:
+            door_assignments[f.dbid] = {
+                "from_room": room_matches[0]["name"],
+                "to_room": "",
+                "from_number": room_matches[0]["number"],
+                "to_number": "",
+                "mark": door_marks.get(f.dbid, ""),
+                "external_id": door_external_ids.get(f.dbid, ""),
+                "room_count": 1,
+            }
+
+    doors_with_1_room = sum(1 for d in door_assignments.values() if d.get("room_count") == 1)
+    doors_with_2_rooms = sum(1 for d in door_assignments.values() if d.get("room_count") == 2)
+    print(f"[DOOR_SPATIAL] Assigned {len(door_assignments)} doors to rooms")
+    print(f"[DOOR_SPATIAL] {doors_with_2_rooms} doors have 2 rooms, {doors_with_1_room} doors have 1 room")
+    print(f"[DOOR_SPATIAL] {unmatched_doors} doors had no nearby rooms (exterior/corridor doors)")
+    print(f"[DOOR_SPATIAL] Skipped: {skipped_not_door} not in door category, {skipped_no_transform} no transform, {skipped_bad_position} bad position")
+    return door_assignments
