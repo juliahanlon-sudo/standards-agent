@@ -223,14 +223,43 @@ def get_model_views(token, urn):
     return r.json().get("data", {}).get("metadata", [])
 
 
-def get_object_tree(token, urn, guid):
+def get_object_tree(token, urn, guid, poll=True, max_attempts=10, wait_seconds=5):
+    """Fetch the object tree for a view.
+
+    The Model Derivative object-tree endpoint returns HTTP 202 with an empty
+    objects list while it lazily (re)builds the tree server-side. When poll=True
+    (the default, used for the primary schedule request) we retry until the tree
+    is actually populated instead of silently proceeding with empty data — which
+    was causing schedules to come back empty on the first load of a cold model.
+
+    Pass poll=False for exploratory per-view probing (e.g. scanning many 3D views
+    to pick the richest one) so a genuinely empty view doesn't cost max_attempts *
+    wait_seconds each.
+    """
+    import time
     encoded = encode_urn(urn)
-    r = requests.get(
-        f"{BASE_URL}/modelderivative/v2/designdata/{encoded}/metadata/{guid}",
-        headers=headers(token),
-    )
-    r.raise_for_status()
-    return r.json()
+    url = f"{BASE_URL}/modelderivative/v2/designdata/{encoded}/metadata/{guid}"
+    # x-ads-force + forceget so the tree is (re)built if it isn't cached yet
+    request_headers = {"Authorization": f"Bearer {token}", "x-ads-force": "true"}
+
+    attempts = max_attempts if poll else 1
+    body = {}
+    for attempt in range(attempts):
+        r = requests.get(url, headers=request_headers, params={"forceget": "true"})
+        r.raise_for_status()
+        body = r.json()
+        objects = body.get("data", {}).get("objects", [])
+        if r.status_code == 200 and objects:
+            return body
+        if not poll:
+            break
+        print(f"[DEBUG] Object tree not ready ({r.status_code}), waiting {wait_seconds}s... "
+              f"(attempt {attempt + 1}/{max_attempts})")
+        time.sleep(wait_seconds)
+
+    # Return whatever we last got (possibly empty) rather than raising, so callers
+    # can still fall back to searching other views.
+    return body
 
 
 def get_properties(token, urn, guid, max_attempts=10, wait_seconds=5):

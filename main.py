@@ -107,7 +107,7 @@ def get_best_guid_for_schedule(token, urn: str, views: list, target_categories: 
         if v.get("role") != "3d":
             continue
         try:
-            tree = aps_mod.get_object_tree(token, urn, v["guid"])
+            tree = aps_mod.get_object_tree(token, urn, v["guid"], poll=False)
             top = tree.get("data", {}).get("objects", [{}])[0].get("objects", [])
             count = sum(
                 sum(len(t.get("objects", [])) for t in cat.get("objects", []))
@@ -247,6 +247,65 @@ def get_arch_models(project_id: str, hub_id: str = Query(default=HUB_ID)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def build_area_schedule(area_records: list) -> dict:
+    """Shape SVF-derived Area records into the standard schedule response.
+
+    Each area is a unique element (not counted/grouped like furniture types), so
+    one record maps to one row. Rows are grouped by (scheme, name, level) only to
+    merge exact duplicates and sum their areas, matching the areas grouping the
+    object-tree path used.
+    """
+    cols = PRESET_COLUMNS["areas"]  # ["Name", "Area Scheme", "Area", "Level"]
+    groups = {}
+    for rec in area_records:
+        key = (rec.get("area_scheme", ""), rec.get("name", ""), rec.get("number", ""), rec.get("level", ""))
+        g = groups.get(key)
+        if not g:
+            g = {"rec": rec, "area_sum": 0.0, "count": 0}
+            groups[key] = g
+        g["area_sum"] += rec.get("area", 0.0)
+        g["count"] += 1
+
+    rows = []
+    all_levels = set()
+    all_schemes = set()
+    for g in groups.values():
+        rec = g["rec"]
+        level = rec.get("level", "")
+        scheme = rec.get("area_scheme", "")
+        area_unit = rec.get("area_unit", "ft^2")
+        area_str = f"{g['area_sum']:.3f} {area_unit}".strip()
+        row = {}
+        for col in cols:
+            if col == "Name":
+                row[col] = rec.get("name", "")
+            elif col == "Area Scheme":
+                row[col] = scheme
+            elif col == "Area":
+                row[col] = area_str
+            elif col == "Level":
+                row[col] = level
+            else:
+                row[col] = ""
+        row["Number"] = rec.get("number", "")
+        row["_levels"] = {level: g["count"]} if level else {}
+        rows.append(row)
+        if level:
+            all_levels.add(level)
+        if scheme:
+            all_schemes.add(scheme)
+
+    rows.sort(key=lambda x: (x.get("Area Scheme", ""), x.get("Level", ""), x.get("Name", "")))
+
+    return {
+        "items": rows,
+        "levels": sorted(all_levels),
+        "available_columns": ["Name", "Area Scheme", "Area", "Level", "Number"],
+        "preset_columns": cols,
+        "area_schemes": sorted(all_schemes),
+    }
+
+
 @app.get("/api/schedule")
 def get_schedule(
     urn: str = Query(...),
@@ -268,27 +327,16 @@ def get_schedule(
         if not views:
             raise HTTPException(status_code=404, detail="No views found in model")
 
-        # For areas: look for Area Schedule views
+        # Areas are 2D, view-specific elements that the Model Derivative object-tree
+        # API does not expose (no view's tree contains an "Areas" category). Read
+        # them directly from the SVF property database instead — same source that
+        # spatial_join uses for rooms.
         if schedule_type == "areas":
-            print(f"[SCHEDULE] Looking for Area Schedule views...")
-            print(f"[SCHEDULE] All views: {[(v.get('name', ''), v.get('role', '')) for v in views]}")
+            area_records = sj.get_areas(token, urn)
+            return build_area_schedule(area_records)
 
-            # Look for schedule views with "area" in the name
-            schedule_views = [v for v in views
-                            if v.get("role") == "2d" and
-                            ("schedule" in v.get("name", "").lower() or "area" in v.get("name", "").lower())]
-
-            if schedule_views:
-                print(f"[SCHEDULE] Found {len(schedule_views)} potential schedule views:")
-                for sv in schedule_views:
-                    print(f"  - {sv.get('name', '')} (role: {sv.get('role', '')})")
-                guid = schedule_views[0]["guid"]
-            else:
-                print(f"[SCHEDULE] No Area Schedule views found. Please create an Area Schedule in Revit and publish the file.")
-                return {"items": [], "levels": [], "available_columns": [], "preset_columns": PRESET_COLUMNS[schedule_type]}
-        else:
-            # Use master view first; if target categories are empty, search all 3D views
-            guid = get_guid(views)
+        # Use master view first; if target categories are empty, search all 3D views
+        guid = get_guid(views)
         tree_data = aps.get_object_tree(token, urn, guid)
         top_objects = tree_data.get("data", {}).get("objects", [{}])[0].get("objects", [])
         cat_nodes = get_tree_nodes_by_category(top_objects, target_categories)
@@ -760,8 +808,6 @@ def get_schedule(
             print(f"[DOORS] Calculating room-to-room relationships...")
             print(f"[DOORS] Number of door rows: {len(rows)}")
             try:
-                print(f"[DOORS] Importing spatial_join module...")
-                import spatial_join as sj
                 print(f"[DOORS] Calling get_door_rooms with URN: {urn[:50]}...")
                 # Use same URN for both doors and rooms (both in architecture model)
                 door_rooms = sj.get_door_rooms(token, urn, urn)

@@ -270,6 +270,157 @@ def get_room_seats(token, furniture_urn, interior_urn):
     return assignments
 
 
+def get_areas(token, urn):
+    """
+    Read Revit Area elements directly from the SVF property database.
+
+    Area elements are 2D, view-specific (they live only in Area Plan views) and
+    are NOT exposed by the Model Derivative object-tree / metadata API — so the
+    normal schedule path (which reads the 3D object tree) finds nothing for them.
+    The property database (.sdb), however, does contain them, so we read it here.
+
+    Returns a list of dicts: {name, number, area, area_unit, level, area_scheme}.
+    """
+    print(f"[AREAS] Reading Area elements from property database")
+    sdb_path = svf.download_sdb(token, urn)
+    conn = sqlite3.connect(sdb_path)
+    try:
+        # Entities whose category is "Revit Areas"
+        area_ents = {
+            r[0] for r in conn.execute(
+                "SELECT e.entity_id FROM _objects_eav e "
+                "JOIN _objects_val v ON e.value_id=v.id "
+                "WHERE e.attribute_id=13 AND v.value='Revit Areas'"
+            ).fetchall()
+        }
+        print(f"[AREAS] Found {len(area_ents)} Area entities")
+        if not area_ents:
+            return []
+
+        # A parameter name can map to SEVERAL attribute ids in the sdb (Revit stores
+        # shared/instance/type variants separately). Different Area elements may use
+        # different ids for the same logical field — e.g. "Level" lives under two
+        # distinct Constraints attribute ids — so we must merge values across ALL
+        # matching ids, not just the first one.
+        def attr_ids(name, category=None):
+            if category:
+                rows = conn.execute(
+                    "SELECT id FROM _objects_attr WHERE name=? AND category=?",
+                    (name, category),
+                ).fetchall()
+                if rows:
+                    return [r[0] for r in rows]
+            return [r[0] for r in conn.execute(
+                "SELECT id FROM _objects_attr WHERE name=?", (name,)
+            ).fetchall()]
+
+        def values_for(name, category=None):
+            ids = attr_ids(name, category)
+            if not ids:
+                return {}
+            placeholders = ",".join("?" for _ in ids)
+            merged = {}
+            for eid, val in conn.execute(
+                f"SELECT e.entity_id, v.value FROM _objects_eav e "
+                f"JOIN _objects_val v ON e.value_id=v.id "
+                f"WHERE e.attribute_id IN ({placeholders})",
+                ids,
+            ).fetchall():
+                # Prefer the first non-empty value seen for each entity
+                if eid not in merged or (not merged[eid] and val):
+                    merged[eid] = val
+            return merged
+
+        names = values_for("Name", "Identity Data")
+        numbers = values_for("Number", "Identity Data")
+        areas = values_for("Area", "Dimensions")
+        levels = values_for("Level", "Constraints")
+
+        # ── Real Area Scheme association ───────────────────────────────────
+        # The sdb has no per-element "Area Scheme" parameter (in Revit the scheme
+        # is a property of the Area Plan view, not the Area). But every element
+        # carries a Revit ElementId (attribute 250), and Revit creates an Area's
+        # ElementId sequentially right after the ElementId of the scheme it belongs
+        # to. So we read the "Revit Area Schemes" entities, take each scheme's own
+        # ElementId, and map every Area to the scheme with the largest ElementId
+        # that is <= the Area's ElementId. This reproduces the true grouping — e.g.
+        # the ASF scheme's areas come back named "Employee Floor" — instead of the
+        # old "Area Type"/BOMA classification, which was NOT the scheme.
+        def element_id(raw):
+            # ElementIds may be compound ("container/id"); the scheme's own id is
+            # the last segment, an Area's own id is the whole (non-compound) value.
+            if raw is None or raw == "":
+                return None
+            try:
+                return int(str(raw).split("/")[-1])
+            except (TypeError, ValueError):
+                return None
+
+        scheme_eids = values_for("ElementId", "__revit__")  # scheme entities too
+        scheme_names_all = values_for("name", "__name__")
+
+        schemes_by_id = {}  # scheme ElementId -> scheme name
+        for r in conn.execute(
+            "SELECT e.entity_id FROM _objects_eav e JOIN _objects_val v ON e.value_id=v.id "
+            "WHERE e.attribute_id=13 AND v.value='Revit Area Schemes'"
+        ).fetchall():
+            sid = element_id(scheme_eids.get(r[0]))
+            if sid is None:
+                continue
+            raw_name = scheme_names_all.get(r[0], "") or ""
+            schemes_by_id[sid] = raw_name.split(" [")[0]
+
+        scheme_bounds = sorted(schemes_by_id)  # ascending scheme ElementIds
+
+        def scheme_for(area_eid):
+            chosen = None
+            for sid in scheme_bounds:
+                if sid <= area_eid:
+                    chosen = sid
+                else:
+                    break
+            return schemes_by_id.get(chosen, "") if chosen is not None else ""
+
+        area_element_ids = values_for("ElementId", "__revit__")
+        schemes = {}
+        for e in area_ents:
+            aid = element_id(area_element_ids.get(e))
+            schemes[e] = scheme_for(aid) if aid is not None else ""
+    finally:
+        conn.close()
+        os.unlink(sdb_path)
+
+    results = []
+    skipped_example = 0
+    for e in sorted(area_ents):
+        raw_area = areas.get(e)
+        if raw_area in (None, "", "0", "0.0"):
+            continue  # unplaced / boundary-only area with no computed area
+        try:
+            area_val = float(raw_area)
+        except (TypeError, ValueError):
+            continue
+        if area_val <= 0:
+            continue
+        # Skip the "(example)..." placeholder areas that ship in the Salesforce
+        # Revit/BOMA template — they aren't real areas in this building.
+        nm = names.get(e, "")
+        if nm.strip().lower().startswith("(example") or nm.strip().lower() == "example area":
+            skipped_example += 1
+            continue
+        results.append({
+            "name": names.get(e, ""),
+            "number": numbers.get(e, ""),
+            "area": area_val,
+            "area_unit": "ft^2",
+            "level": levels.get(e, ""),
+            "area_scheme": schemes.get(e, ""),
+        })
+    print(f"[AREAS] Returning {len(results)} placed areas with computed area "
+          f"({skipped_example} template '(example)' areas skipped)")
+    return results
+
+
 def get_door_rooms(token, door_urn, interior_urn):
     """
     Calculate which rooms each door connects to using spatial analysis.
