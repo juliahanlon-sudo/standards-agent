@@ -968,14 +968,32 @@
     }
   }
 
+  // A dedicated furniture model has FUR/FURN/FN/FF&E in its name. Note filenames
+  // commonly say "FUR" (not "FURN"), and almost every filename contains "Symetri"
+  // (the CAD vendor) — so "sym" must NOT be treated as a furniture signal.
+  const furnKw = /(?<![a-z])(fur|furn|furniture|fn|ff.?e)(?![a-z])/i;
+  const archKw = /(?<![a-z])(ar|arch|interior|int|ia)(?![a-z])/i;
+  // Federated / QA / all-discipline aggregate models carry furniture geometry but
+  // are noisy and often sparse for a clean furniture schedule — deprioritize them.
+  const aggregateKw = /(?<![a-z])(qaqc|qa|federated|all|combined|coordination)(?![a-z])/i;
+
+  function furnitureScore(name) {
+    let s = 0;
+    if (furnKw.test(name)) s += 10;
+    if (aggregateKw.test(name)) s -= 6;   // prefer a dedicated FUR model over an "-All-" model
+    return s;
+  }
+
   function autoSelectBestModel(type) {
     if (!modelData.length) return;
-    const archKw = /ar[-_]|arch[-_]|interior|int[-_]|ia[-_]/i;
-    const furnKw  = /furn|fn[-_]|sym[-_]furn|ff.e/i;
     let bestIdx = 0;
     if (type === 'furniture') {
-      const i = modelData.findIndex(m => furnKw.test(m.name));
-      if (i >= 0) bestIdx = i;
+      // Pick the highest-scoring furniture model (dedicated FUR beats federated/QA)
+      let best = -Infinity;
+      modelData.forEach((m, i) => {
+        const sc = furnitureScore(m.name);
+        if (sc > best) { best = sc; bestIdx = i; }
+      });
     } else if (type !== 'capacity') {
       const i = modelData.findIndex(m => archKw.test(m.name) && !furnKw.test(m.name));
       if (i >= 0) bestIdx = i;

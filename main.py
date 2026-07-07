@@ -22,7 +22,10 @@ async def startup():
 
 HUB_ID = "b.8a643169-4b2b-4c79-bff4-289208a76b2e"
 
-FURNITURE_KEYWORDS = {"furn", "furniture", "fn", "sym", "symb", "ff&e"}
+# NOTE: filenames commonly abbreviate furniture as "FUR" (not "FURN"), and nearly
+# every Salesforce model filename contains "Symetri" (the CAD vendor) — so "sym"
+# must NOT be a furniture signal or it matches almost everything.
+FURNITURE_KEYWORDS = {"fur", "furn", "furniture", "fn", "ff&e"}
 ARCH_KEYWORDS = {" ar ", "_ar_", "-ar-", " a ", "_a_", "-a-", " ia ", "_ia_", "-ia-", "arch"}
 ARCH_MODEL_KEYWORDS = {"ar", "arch", "ia", "int"}
 
