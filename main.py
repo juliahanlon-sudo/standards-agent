@@ -760,10 +760,18 @@ def get_schedule(
             if schedule_type == "furniture":
                 sfdc_tag = fp.get("SFDC_Tag Number", "") or fp.get("SFDC_TAG NUMBER", "")
                 # Frame Tag in Revit is stored as Type Mark (e.g. CH-08, SS-01)
-                frame_tag = fp.get("Type Mark", "") or fp.get("Frame Tag", "")
+                type_mark = fp.get("Type Mark", "") or fp.get("Frame Tag", "")
+                frame_tag = type_mark
                 manufacturer = fp.get("Manufacturer", "")
 
+                # Raw sources so the UI can show which field a tag came from.
+                # The tag lives in SFDC_Tag Number in some files and Type Mark in
+                # others; when one is blank the column borrows the other.
+                row["_sfdc_tag_raw"] = sfdc_tag
+                row["_type_mark_raw"] = type_mark
+
                 # If no tag found, try to extract from Family name BEFORE validation
+                extracted_tag = ""
                 if not sfdc_tag and not frame_tag:
                     import re as _re5
                     m = _re5.search(r'\b([A-Za-z]{2,4}-\d+)\b', family_name)
@@ -771,10 +779,14 @@ def get_schedule(
                         extracted_tag = m.group(1).upper()
                         frame_tag = extracted_tag  # Use extracted tag for validation
                         print(f"[SCHEDULE] Using extracted tag '{extracted_tag}' from family '{family_name}' for validation")
+                row["_extracted_tag"] = extracted_tag
 
-                # Populate Frame Tag column in row if requested
+                # Populate Frame Tag column in row if requested.
+                # Fall back to SFDC_Tag Number (then family-extracted) so the column
+                # is never blank when a tag exists elsewhere; the UI flags borrowed
+                # values in red with a tooltip naming the real source.
                 if "Frame Tag" in cols:
-                    row["Frame Tag"] = frame_tag
+                    row["Frame Tag"] = type_mark or sfdc_tag or extracted_tag
                 validation = at.validate_row(
                     sfdc_tag, frame_tag, at_records, manufacturer,
                     building_code, building_records, manufacturer_mapping

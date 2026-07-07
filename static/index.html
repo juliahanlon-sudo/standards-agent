@@ -155,6 +155,10 @@
     .filter-select { width:auto; min-width:150px; font-size:12px; padding:7px 28px 7px 10px; }
 
     .table-wrap { overflow-x:auto; }
+    /* The resizer switches each table to table-layout:fixed after measuring natural
+       column widths (see initColumnResize). Fixed layout makes set widths
+       authoritative so every column resizes and cell text can wrap; measuring first
+       preserves the natural initial sizing instead of equal-width columns. */
     table { width:100%; border-collapse:collapse; font-size:12px; }
     thead th { background:var(--bg); color:var(--text-mid); font-weight:700; text-align:left; padding:10px 14px; border-bottom:2px solid var(--border); white-space:nowrap; cursor:pointer; user-select:none; position:sticky; top:0; z-index:1; transition:background .1s; overflow:hidden; text-overflow:ellipsis; }
     thead th .col-resizer { position:absolute; top:0; right:0; width:8px; height:100%; cursor:col-resize; user-select:none; z-index:2; }
@@ -169,7 +173,7 @@
     tbody tr { border-bottom:1px solid #f0f0f0; transition:background .1s; }
     tbody tr:nth-child(even) { background:var(--row-alt); }
     tbody tr:hover { background:var(--blue-light) !important; cursor:pointer; }
-    tbody td { padding:9px 14px; vertical-align:middle; }
+    tbody td { padding:9px 14px; vertical-align:top; overflow-wrap:break-word; word-break:break-word; }
 
     .empty-state { text-align:center; padding:56px 24px; color:var(--text-light); }
     .empty-state .empty-icon { font-size:32px; margin-bottom:12px; }
@@ -1321,6 +1325,37 @@
       }
       cols.forEach(col => {
         const td = document.createElement('td');
+        if ((col === 'Frame Tag' || col === 'SFDC_Tag Number') && scheduleType === 'furniture'
+            && (row['_type_mark_raw'] !== undefined || row['_sfdc_tag_raw'] !== undefined)) {
+          // Tag columns: the tag lives in Type Mark in some files and
+          // SFDC_Tag Number in others. Show this column's own source; if it's
+          // empty, borrow the other and render it red with a tooltip naming
+          // the real source.
+          const typeMark = (row['_type_mark_raw'] || '').trim();
+          const sfdc = (row['_sfdc_tag_raw'] || '').trim();
+          const extracted = (row['_extracted_tag'] || '').trim();
+          const own = (col === 'Frame Tag') ? typeMark : sfdc;
+          if (own) {
+            td.textContent = own;
+          } else {
+            const borrowed = (col === 'Frame Tag') ? sfdc : typeMark;
+            if (borrowed) {
+              td.textContent = borrowed;
+              td.style.color = 'var(--red)';
+              td.style.cursor = 'help';
+              td.title = 'Value coming from ' + (col === 'Frame Tag' ? 'SFDC_Tag Number' : 'Type Mark');
+            } else if (extracted) {
+              td.textContent = extracted;
+              td.style.color = 'var(--red)';
+              td.style.cursor = 'help';
+              td.title = 'Value extracted from Family name (no tag in Type Mark or SFDC_Tag Number)';
+            } else {
+              td.textContent = '';
+            }
+          }
+          tr.appendChild(td);
+          return;
+        }
         if (col === 'Validation Status') {
           const color = row['_validation_color'] || 'grey';
           const badge = document.createElement('span');
@@ -2724,14 +2759,21 @@
       th.style.width = w; th.style.minWidth = w; th.style.maxWidth = w;
     };
 
-    // Ensure every th in a table has a resize handle and its saved width.
+    // Ensure every th in a table has a resize handle and a pinned width.
     function decorate(table) {
       const key = tableKey(table);
       const ths = table.querySelectorAll('thead th');
+      if (!ths.length) return;
       const saved = store[key] || {};
-      ths.forEach(th => {
+      // Measure natural widths while still in auto layout, THEN switch to fixed
+      // layout and pin them. This keeps the natural initial sizing (rather than
+      // equal-width columns) while making every column authoritatively resizable.
+      const natural = Array.from(ths).map(th => th.offsetWidth);
+      table.style.tableLayout = 'fixed';
+      ths.forEach((th, i) => {
         const label = colLabel(th);
-        if (saved[label] != null) applyWidth(th, saved[label]);
+        const w = saved[label] != null ? saved[label] : natural[i];
+        if (w) applyWidth(th, w);
         if (!th.querySelector('.col-resizer')) {
           const handle = document.createElement('span');
           handle.className = 'col-resizer';
