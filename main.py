@@ -100,27 +100,58 @@ def get_guid(views: list, prefer_name_hint: str = "") -> str:
     return views[0]["guid"] if views else None
 
 
-def get_best_guid_for_schedule(token, urn: str, views: list, target_categories: list) -> str:
-    """Find the 3D view that has the most instances for the target categories."""
+def get_best_guid_for_schedule(token, urn: str, views: list, target_categories: list,
+                               min_instances: int = 1) -> str:
+    """Find the 3D view that has the most instances for the target categories.
+
+    Two passes so we work on both warm and cold models:
+
+      Pass 1 — fast probe (poll=False) of every 3D view. On a model whose per-view
+      object trees are already built server-side this immediately finds the richest
+      view.
+
+      Pass 2 — only if pass 1 found nothing. Each Revit 3D view is a *separate*
+      derivative, and on a cold model those trees return HTTP 202/empty until the
+      server lazily builds them — so a non-polling probe sees 0 everywhere and we'd
+      wrongly fall back to the (sparse) master view. This was why Mexico City's
+      furniture schedule intermittently came back empty: master view is sparse, and
+      the cold per-view probes all read as empty. So here we poll each 3D view until
+      its tree is populated, stopping as soon as one clears the threshold.
+    """
     import aps_client as aps_mod
+    threed = [v for v in views if v.get("role") == "3d"]
     best_guid = get_guid(views)
     best_count = 0
 
-    for v in views:
-        if v.get("role") != "3d":
-            continue
+    def count_for(guid, poll):
         try:
-            tree = aps_mod.get_object_tree(token, urn, v["guid"], poll=False)
+            tree = aps_mod.get_object_tree(token, urn, guid, poll=poll,
+                                           max_attempts=6, wait_seconds=5)
             top = tree.get("data", {}).get("objects", [{}])[0].get("objects", [])
-            count = sum(
+            return sum(
                 sum(len(t.get("objects", [])) for t in cat.get("objects", []))
                 for cat in top if cat["name"] in target_categories
             )
-            if count > best_count:
-                best_count = count
-                best_guid = v["guid"]
         except Exception:
-            continue
+            return 0
+
+    # Pass 1: fast, no polling — catches already-built (warm) views.
+    for v in threed:
+        c = count_for(v["guid"], poll=False)
+        if c > best_count:
+            best_count, best_guid = c, v["guid"]
+
+    # Pass 2: nothing found on the fast pass — the per-view trees may just be cold.
+    # Poll each 3D view until populated; stop at the first view that has the data.
+    if best_count < min_instances:
+        print(f"[SCHEDULE] Fast view probe found nothing for {target_categories}; "
+              f"polling {len(threed)} 3D views (model likely cold)...")
+        for v in threed:
+            c = count_for(v["guid"], poll=True)
+            if c > best_count:
+                best_count, best_guid = c, v["guid"]
+            if best_count >= min_instances:
+                break
 
     return best_guid
 
@@ -755,6 +786,8 @@ def get_schedule(
                 row["_building_match"] = validation.get("building_match")
                 row["_airtable_region"] = validation.get("airtable_region", "")
                 row["_is_cross_region"] = validation.get("is_cross_region", False)
+                row["_needs_fabric_code"] = validation.get("needs_fabric_code", False)
+                row["Note"] = validation.get("note", "")
 
             # Attach instance list for itemize mode (furniture and doors)
             if schedule_type in ("furniture", "doors"):

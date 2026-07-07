@@ -96,9 +96,12 @@ MANUFACTURER_NAMES = {
 }
 
 
-def build_lookup(records: list[dict], building_id: str = None, region_buildings: list[str] = None, region: str = None) -> dict:
+def build_lookup(records: list[dict], building_id: str = None, region_buildings: list[str] = None, region: str = None, key_field: str = "Frame Tag") -> dict:
     """
-    Build a lookup dict: frame_tag (lowercase) → {status, new_tag, frame_tag, manufacturer, buildings, region}
+    Build a lookup dict: key (lowercase) → {status, new_tag, frame_tag, manufacturer, buildings, region}
+    The lookup key comes from `key_field` (default "Frame Tag"). Pass "Tag - Color Only"
+    to match model tags that carry a fabric letter but no fabric code (e.g. SS-238Z),
+    or "NEW TAG NUMBER" to match the fully-specified tag (e.g. SS-238Z.03).
     When duplicates exist:
     - If building_id provided, prefer records where that building is in the Buildings list
     - If no building match, prefer records where region matches
@@ -108,7 +111,7 @@ def build_lookup(records: list[dict], building_id: str = None, region_buildings:
     lookup = {}
     for rec in records:
         fields = rec.get("fields", {})
-        ft = str(fields.get("Frame Tag", "")).strip().lower()
+        ft = str(fields.get(key_field, "")).strip().lower()
         new_tag = str(fields.get("NEW TAG NUMBER", "")).strip()
         status = str(fields.get("Status", "")).strip()
         # Manufacturer Abbreviation is a list (from lookup field), take first entry
@@ -246,6 +249,29 @@ def validate_row(sfdc_tag: str, frame_tag: str, records: list[dict], manufacture
         if sfdc_tag and sfdc_tag.strip().lower() != lookup_key:
             match = lkp.get(sfdc_tag.strip().lower())
 
+    # Fabric-code fallback: the model tag carries a fabric letter but no fabric
+    # code (e.g. model "SS-238Z" vs Airtable NEW TAG "SS-238Z.03"). Airtable's
+    # "Tag - Color Only" field holds the frame+fabric-letter (e.g. "SS-238Z"),
+    # so match against that. When we match this way, the fabric code still needs
+    # to be assigned in the model.
+    needs_fabric_code = False
+    if not match:
+        # First try the fully-specified tag (frame+fabric+code, e.g. SS-238Z.03).
+        # A model carrying the full code matches cleanly with no note.
+        newtag_lkp = build_lookup(records, building_id, region_buildings, region, key_field="NEW TAG NUMBER")
+        match = newtag_lkp.get(lookup_key)
+        if not match and sfdc_tag and sfdc_tag.strip().lower() != lookup_key:
+            match = newtag_lkp.get(sfdc_tag.strip().lower())
+    if not match:
+        # Then fall back to frame+fabric-letter without a code (e.g. model
+        # SS-238Z matches Airtable "Tag - Color Only"). Fabric code still needed.
+        color_lkp = build_lookup(records, building_id, region_buildings, region, key_field="Tag - Color Only")
+        match = color_lkp.get(lookup_key)
+        if not match and sfdc_tag and sfdc_tag.strip().lower() != lookup_key:
+            match = color_lkp.get(sfdc_tag.strip().lower())
+        if match:
+            needs_fabric_code = True
+
     if match:
         status = match["status"]
         airtable_mfr = match.get("manufacturer", "")
@@ -301,6 +327,8 @@ def validate_row(sfdc_tag: str, frame_tag: str, records: list[dict], manufacture
         else:
             mfr_display_name = MANUFACTURER_NAMES.get(airtable_mfr, airtable_mfr)
 
+        fabric_note = "Need to assign fabric code" if needs_fabric_code else ""
+
         if status.lower() == "active":
             result = {
                 "status": "Active",
@@ -311,6 +339,8 @@ def validate_row(sfdc_tag: str, frame_tag: str, records: list[dict], manufacture
                 "building_match": building_match,
                 "airtable_region": airtable_region,
                 "is_cross_region": is_cross_region,
+                "needs_fabric_code": needs_fabric_code,
+                "note": fabric_note,
             }
             # Debug for BE-01
             if (frame_tag or sfdc_tag or "").upper() == "BE-01":
@@ -326,6 +356,8 @@ def validate_row(sfdc_tag: str, frame_tag: str, records: list[dict], manufacture
                 "building_match": building_match,
                 "airtable_region": airtable_region,
                 "is_cross_region": is_cross_region,
+                "needs_fabric_code": needs_fabric_code,
+                "note": fabric_note,
             }
             # Debug for BE-01
             if (frame_tag or sfdc_tag or "").upper() == "BE-01":
@@ -341,6 +373,8 @@ def validate_row(sfdc_tag: str, frame_tag: str, records: list[dict], manufacture
                 "building_match": building_match,
                 "airtable_region": airtable_region,
                 "is_cross_region": is_cross_region,
+                "needs_fabric_code": needs_fabric_code,
+                "note": fabric_note,
             }
             # Debug for BE-01
             if (frame_tag or sfdc_tag or "").upper() == "BE-01":
@@ -356,17 +390,24 @@ def validate_row(sfdc_tag: str, frame_tag: str, records: list[dict], manufacture
         "is_cross_region": False,
         "manufacturer_match": None,
         "building_match": None,
+        "needs_fabric_code": False,
+        "note": "",
     }
 
 
 def fetch_buildings(region: str = "") -> list[dict]:
-    """Fetch building records from Airtable Buildings table."""
+    """Fetch building records from Airtable Buildings table.
+
+    Region parameter is kept for backwards compatibility but NOT used to filter.
+    Building codes (e.g. MEX05) are globally unique, so filtering by the region
+    parsed from the Forma project name breaks matches whenever that label
+    disagrees with Airtable's Region (e.g. Forma "AMER MEX05" vs Airtable LATAM).
+    Region prioritization happens in build_lookup instead, same as fetch_records.
+    """
     if not API_KEY or API_KEY == "your_airtable_api_key_here":
         return []
     headers = {"Authorization": f"Bearer {API_KEY}"}
     params = {}
-    if region:
-        params["filterByFormula"] = f"{{Region}}='{region}'"
 
     records = []
     offset = None

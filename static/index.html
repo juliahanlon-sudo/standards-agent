@@ -156,7 +156,11 @@
 
     .table-wrap { overflow-x:auto; }
     table { width:100%; border-collapse:collapse; font-size:12px; }
-    thead th { background:var(--bg); color:var(--text-mid); font-weight:700; text-align:left; padding:10px 14px; border-bottom:2px solid var(--border); white-space:nowrap; cursor:pointer; user-select:none; position:sticky; top:0; z-index:1; transition:background .1s; }
+    thead th { background:var(--bg); color:var(--text-mid); font-weight:700; text-align:left; padding:10px 14px; border-bottom:2px solid var(--border); white-space:nowrap; cursor:pointer; user-select:none; position:sticky; top:0; z-index:1; transition:background .1s; overflow:hidden; text-overflow:ellipsis; }
+    thead th .col-resizer { position:absolute; top:0; right:0; width:8px; height:100%; cursor:col-resize; user-select:none; z-index:2; }
+    thead th .col-resizer:hover, thead th .col-resizer.resizing { background:var(--blue); opacity:.35; }
+    body.col-resizing { cursor:col-resize !important; }
+    body.col-resizing * { cursor:col-resize !important; user-select:none !important; }
     thead th:hover { background:#eaf0f8; color:var(--blue); }
     thead th .sort-icon { margin-left:4px; font-size:10px; }
     thead th .sort-icon::after { content:'⇅'; color:var(--text-light); }
@@ -1345,6 +1349,18 @@
           }
 
           td.appendChild(badge);
+
+          // Fabric-code note: matched by frame+fabric letter, but the fabric
+          // code is missing from the model tag (e.g. SS-238Z vs SS-238Z.03).
+          if (row['_needs_fabric_code'] === true) {
+            const note = document.createElement('span');
+            note.className = 'badge badge-yellow';
+            note.style.marginLeft = '6px';
+            note.textContent = 'Need to assign fabric code';
+            note.title = 'Matched by frame + fabric, but the fabric code is missing from the model tag. Assign the fabric code in the model.';
+            note.style.cursor = 'help';
+            td.appendChild(note);
+          }
         } else if (col === 'Manufacturer' && airtableActive) {
           // Show manufacturer with warning ONLY when Airtable comparison is active
           // Debug logging
@@ -2686,6 +2702,79 @@
     a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
     a.download = 'benchmark.csv'; a.click();
   });
+
+  // ---- Resizable table columns -------------------------------------------
+  // Works across all schedule tables, including those whose headers are
+  // rebuilt on every sort/filter. Widths persist in localStorage.
+  (function initColumnResize() {
+    const STORE_KEY = 'colWidths';
+    let store = {};
+    try { store = JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { store = {}; }
+    const saveStore = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) {} };
+
+    let keySeq = 0;
+    const tableKey = (table) => {
+      if (table.id) return table.id;
+      if (!table.dataset.rzKey) table.dataset.rzKey = 'tbl' + (keySeq++);
+      return table.dataset.rzKey;
+    };
+    const colLabel = (th) => th.dataset.col || (th.textContent || '').trim();
+    const applyWidth = (th, px) => {
+      const w = Math.max(40, Math.round(px)) + 'px';
+      th.style.width = w; th.style.minWidth = w; th.style.maxWidth = w;
+    };
+
+    // Ensure every th in a table has a resize handle and its saved width.
+    function decorate(table) {
+      const key = tableKey(table);
+      const ths = table.querySelectorAll('thead th');
+      const saved = store[key] || {};
+      ths.forEach(th => {
+        const label = colLabel(th);
+        if (saved[label] != null) applyWidth(th, saved[label]);
+        if (!th.querySelector('.col-resizer')) {
+          const handle = document.createElement('span');
+          handle.className = 'col-resizer';
+          // Don't let a click on the handle trigger header sort.
+          handle.addEventListener('click', e => { e.stopPropagation(); });
+          handle.addEventListener('mousedown', e => startDrag(e, table, th, handle));
+          th.appendChild(handle);
+        }
+      });
+    }
+
+    let drag = null;
+    function startDrag(e, table, th, handle) {
+      e.preventDefault(); e.stopPropagation();
+      drag = { table, th, handle, startX: e.clientX, startW: th.offsetWidth };
+      handle.classList.add('resizing');
+      document.body.classList.add('col-resizing');
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', endDrag);
+    }
+    function onMove(e) {
+      if (!drag) return;
+      applyWidth(drag.th, drag.startW + (e.clientX - drag.startX));
+    }
+    function endDrag() {
+      if (!drag) return;
+      const key = tableKey(drag.table);
+      (store[key] = store[key] || {})[colLabel(drag.th)] = drag.th.offsetWidth;
+      saveStore();
+      drag.handle.classList.remove('resizing');
+      document.body.classList.remove('col-resizing');
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', endDrag);
+      drag = null;
+    }
+
+    function decorateAll() { document.querySelectorAll('table').forEach(decorate); }
+    decorateAll();
+    // Re-decorate + re-apply widths whenever any thead is rebuilt.
+    const obs = new MutationObserver(() => decorateAll());
+    document.querySelectorAll('thead').forEach(head =>
+      obs.observe(head, { childList: true, subtree: true }));
+  })();
 
   loadProjects();
 </script>
