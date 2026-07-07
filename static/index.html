@@ -1325,33 +1325,29 @@
       }
       cols.forEach(col => {
         const td = document.createElement('td');
-        if ((col === 'Frame Tag' || col === 'SFDC_Tag Number') && scheduleType === 'furniture'
+        if (col === 'SFDC_Tag Number' && scheduleType === 'furniture'
             && (row['_type_mark_raw'] !== undefined || row['_sfdc_tag_raw'] !== undefined)) {
-          // Tag columns: the tag lives in Type Mark in some files and
-          // SFDC_Tag Number in others. Show this column's own source; if it's
-          // empty, borrow the other and render it red with a tooltip naming
-          // the real source.
-          const typeMark = (row['_type_mark_raw'] || '').trim();
+          // The tag lives in SFDC_Tag Number in some files. When it's empty,
+          // fall back to Type Mark, then to a tag extracted from the Family
+          // name — showing borrowed values in red with a tooltip naming the
+          // source.
           const sfdc = (row['_sfdc_tag_raw'] || '').trim();
+          const typeMark = (row['_type_mark_raw'] || '').trim();
           const extracted = (row['_extracted_tag'] || '').trim();
-          const own = (col === 'Frame Tag') ? typeMark : sfdc;
-          if (own) {
-            td.textContent = own;
+          if (sfdc) {
+            td.textContent = sfdc;
+          } else if (typeMark) {
+            td.textContent = typeMark;
+            td.style.color = 'var(--red)';
+            td.style.cursor = 'help';
+            td.title = 'Value coming from Type Mark';
+          } else if (extracted) {
+            td.textContent = extracted;
+            td.style.color = 'var(--red)';
+            td.style.cursor = 'help';
+            td.title = 'Value coming from Family Name';
           } else {
-            const borrowed = (col === 'Frame Tag') ? sfdc : typeMark;
-            if (borrowed) {
-              td.textContent = borrowed;
-              td.style.color = 'var(--red)';
-              td.style.cursor = 'help';
-              td.title = 'Value coming from ' + (col === 'Frame Tag' ? 'SFDC_Tag Number' : 'Type Mark');
-            } else if (extracted) {
-              td.textContent = extracted;
-              td.style.color = 'var(--red)';
-              td.style.cursor = 'help';
-              td.title = 'Value extracted from Family name (no tag in Type Mark or SFDC_Tag Number)';
-            } else {
-              td.textContent = '';
-            }
+            td.textContent = '';
           }
           tr.appendChild(td);
           return;
@@ -1451,12 +1447,10 @@
   airtableBtn.addEventListener('click', () => {
     airtableActive = !airtableActive;
     if (airtableActive) {
-      // Add Frame Tag, Manufacturer, and Validation Status when Airtable is active
-      if (!activeColumns.includes('Frame Tag')) {
-        const idx = activeColumns.indexOf('SFDC_Tag Number');
-        if (idx >= 0) activeColumns.splice(idx + 1, 0, 'Frame Tag');
-        else activeColumns.unshift('Frame Tag');
-      }
+      // Add Manufacturer and Validation Status when Airtable is active.
+      // (No Frame Tag column: the tag is shown in the SFDC_Tag Number column,
+      //  which falls back to Type Mark / Family Name when SFDC_Tag Number is
+      //  empty — see the tag-cell rendering in renderTable.)
       if (!activeColumns.includes('Manufacturer')) {
         const idx = activeColumns.indexOf('Type');
         if (idx >= 0) activeColumns.splice(idx + 1, 0, 'Manufacturer');
@@ -1471,7 +1465,7 @@
       const cbManufacturer = colList.querySelector('input[value="Manufacturer"]');
       if (cbManufacturer) cbManufacturer.checked = true;
     } else {
-      activeColumns = activeColumns.filter(c => c !== 'Validation Status' && c !== 'Frame Tag' && c !== 'Manufacturer');
+      activeColumns = activeColumns.filter(c => c !== 'Validation Status' && c !== 'Manufacturer');
       airtableBtn.style.background = '';
       airtableBtn.style.color = '';
       airtableBtn.style.borderColor = '';
