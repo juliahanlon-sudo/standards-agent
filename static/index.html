@@ -154,6 +154,20 @@
     .search-icon { position:absolute; left:10px; top:50%; transform:translateY(-50%); color:var(--text-light); pointer-events:none; }
     .filter-select { width:auto; min-width:150px; font-size:12px; padding:7px 28px 7px 10px; }
 
+    /* Multi-select level filter */
+    .ms-filter { position:relative; display:inline-block; }
+    .ms-toggle { font-size:12px; padding:7px 28px 7px 10px; min-width:150px; text-align:left; background:var(--white);
+      border:1px solid var(--border); border-radius:8px; cursor:pointer; color:var(--text); position:relative; }
+    .ms-toggle::after { content:'▾'; position:absolute; right:10px; top:50%; transform:translateY(-50%); color:var(--text-light); }
+    .ms-panel { display:none; position:absolute; z-index:50; top:calc(100% + 4px); left:0; min-width:200px; max-height:280px; overflow-y:auto;
+      background:var(--white); border:1px solid var(--border); border-radius:8px; box-shadow:0 4px 16px rgba(0,40,120,.14); padding:6px; }
+    .ms-filter.open .ms-panel { display:block; }
+    .ms-item { display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:6px; cursor:pointer; font-size:12px; }
+    .ms-item:hover { background:var(--bg); }
+    .ms-item input { accent-color:var(--blue); width:14px; height:14px; flex-shrink:0; }
+    .ms-actions { display:flex; gap:8px; padding:4px 8px 6px; border-bottom:1px solid var(--border); margin-bottom:4px; }
+    .ms-actions button { font-size:11px; color:var(--blue); background:none; border:none; cursor:pointer; padding:2px 4px; }
+
     .table-wrap { overflow-x:auto; }
     /* The resizer switches each table to table-layout:fixed after measuring natural
        column widths (see initColumnResize). Fixed layout makes set widths
@@ -484,9 +498,16 @@
             <span class="search-icon">&#9906;</span>
             <input type="text" id="search-input" placeholder="Search all columns…" />
           </div>
-          <select class="filter-select" id="level-filter" style="display:none">
-            <option value="">All Levels</option>
-          </select>
+          <div class="ms-filter" id="level-filter" style="display:none">
+            <button type="button" class="ms-toggle" id="level-toggle">All Levels</button>
+            <div class="ms-panel" id="level-panel">
+              <div class="ms-actions">
+                <button type="button" id="level-all">Select all</button>
+                <button type="button" id="level-none">Clear</button>
+              </div>
+              <div id="level-options"></div>
+            </div>
+          </div>
           <select class="filter-select" id="area-scheme-filter" style="display:none">
             <option value="">All Area Schemes</option>
           </select>
@@ -754,6 +775,11 @@
   const resultsTitle  = document.getElementById('results-title');
   const searchInput   = document.getElementById('search-input');
   const levelFilter   = document.getElementById('level-filter');
+  const levelToggle   = document.getElementById('level-toggle');
+  const levelPanel    = document.getElementById('level-panel');
+  const levelOptions  = document.getElementById('level-options');
+  // Currently-selected levels (empty set = All Levels).
+  let selectedLevels = new Set();
   const areaSchemeFilter = document.getElementById('area-scheme-filter');
   const exportBtn     = document.getElementById('export-btn');
   const airtableBtn   = document.getElementById('airtable-btn');
@@ -1216,14 +1242,53 @@
   }
 
   function buildLevelFilter(levels) {
-    levelFilter.innerHTML = '<option value="">All Levels</option>';
+    selectedLevels = new Set();
+    levelOptions.innerHTML = '';
     levels.forEach(l => {
-      const o = document.createElement('option');
-      o.value = l; o.textContent = l;
-      levelFilter.appendChild(o);
+      const item = document.createElement('label');
+      item.className = 'ms-item';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = l;
+      cb.addEventListener('change', () => {
+        if (cb.checked) selectedLevels.add(l); else selectedLevels.delete(l);
+        updateLevelToggleLabel();
+        renderTable();
+      });
+      const span = document.createElement('span');
+      span.textContent = l;
+      item.appendChild(cb); item.appendChild(span);
+      levelOptions.appendChild(item);
     });
     levelFilter.style.display = levels.length ? '' : 'none';
+    updateLevelToggleLabel();
   }
+
+  function updateLevelToggleLabel() {
+    const n = selectedLevels.size;
+    if (n === 0) levelToggle.textContent = 'All Levels';
+    else if (n === 1) levelToggle.textContent = [...selectedLevels][0];
+    else levelToggle.textContent = n + ' levels selected';
+  }
+
+  // Open/close the level dropdown; close on outside click.
+  levelToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    levelFilter.classList.toggle('open');
+  });
+  document.addEventListener('click', (e) => {
+    if (!levelFilter.contains(e.target)) levelFilter.classList.remove('open');
+  });
+  document.getElementById('level-all').addEventListener('click', () => {
+    levelOptions.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.checked = true; selectedLevels.add(cb.value);
+    });
+    updateLevelToggleLabel(); renderTable();
+  });
+  document.getElementById('level-none').addEventListener('click', () => {
+    levelOptions.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false);
+    selectedLevels.clear();
+    updateLevelToggleLabel(); renderTable();
+  });
 
   function buildAreaSchemeFilter(schemes) {
     areaSchemeFilter.innerHTML = '<option value="">All Area Schemes</option>';
@@ -1235,20 +1300,20 @@
     areaSchemeFilter.style.display = schemes.length ? '' : 'none';
   }
 
-  levelFilter.addEventListener('change', renderTable);
   areaSchemeFilter.addEventListener('change', renderTable);
   searchInput.addEventListener('input', renderTable);
 
   function renderTable() {
     const query = searchInput.value.toLowerCase();
-    const level = levelFilter.value;
+    const levels = selectedLevels;  // empty set = all levels
     const areaScheme = areaSchemeFilter.value;
     const cols = activeColumns.filter(c => c !== '_validation_color' && c !== '_levels');
 
     let rows = allData.filter(r => {
-      if (level) {
+      if (levels.size) {
         const levelData = r['_levels'] || {};
-        if (!(level in levelData)) return false;
+        // Keep the row if it appears on any of the selected levels.
+        if (![...levels].some(l => l in levelData)) return false;
       }
       if (areaScheme && r['Area Scheme'] !== areaScheme) {
         return false;
@@ -1256,8 +1321,10 @@
       if (query) return Object.values(r).some(v => String(v).toLowerCase().includes(query));
       return true;
     }).map(r => {
-      if (level && r['_levels']) {
-        return { ...r, Count: String(r['_levels'][level] ?? 0) };
+      // When levels are selected, recount to just those levels (sum across them).
+      if (levels.size && r['_levels']) {
+        const c = [...levels].reduce((s, l) => s + (r['_levels'][l] ?? 0), 0);
+        return { ...r, Count: String(c) };
       }
       return r;
     });
@@ -1747,13 +1814,22 @@
   });
 
   exportBtn.addEventListener('click', () => {
-    const cols = activeColumns.filter(c => c !== '_validation_color');
-    const level = levelFilter.value;
+    const cols = activeColumns.filter(c => c !== '_validation_color' && c !== '_levels');
+    const levels = selectedLevels;  // empty set = all levels
     const query = searchInput.value.toLowerCase();
     const rows = allData.filter(r => {
-      if (level && r['Level'] !== level) return false;
+      if (levels.size) {
+        const levelData = r['_levels'] || {};
+        if (![...levels].some(l => l in levelData)) return false;
+      }
       if (query) return Object.values(r).some(v => String(v).toLowerCase().includes(query));
       return true;
+    }).map(r => {
+      if (levels.size && r['_levels']) {
+        const c = [...levels].reduce((s, l) => s + (r['_levels'][l] ?? 0), 0);
+        return { ...r, Count: String(c) };
+      }
+      return r;
     });
     const cellVal = (r, c) => {
       // Rooms: export the effective (possibly manually mapped) category.
