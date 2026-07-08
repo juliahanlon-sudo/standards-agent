@@ -187,6 +187,51 @@ def room_category(l3_section: str) -> str:
     return l3_section or "Unmatched"
 
 
+def stage2_category(serraview_name: str, section: str) -> str:
+    """Fine-grained pie-chart bucket (Salesforce "Stage 2"). Enclosed
+    Collaboration splits into Conference / Huddle / Phone Room; Focus Pod rolls
+    into Phone Room and Meeting Pod into Huddle Room."""
+    sv = (serraview_name or "").lower()
+    if section == "L3 - Individual Work":
+        return "Individual Work"
+    if section == "L3 - Open Collaboration":
+        return "Collaboration Open"
+    if section == "L3 - Enclosed Collaboration":
+        if "conference room" in sv:
+            return "Conference Room"
+        if "huddle" in sv or "meeting pod" in sv:
+            return "Huddle Room"
+        if "phone room" in sv or "focus pod" in sv:
+            return "Phone Room"
+        return "Conference Room"
+    if section == "L3 - Workspace Specialty":
+        return "Workspace Specialty"
+    if section in ("L3 - Hospitality", "L3 - M&E", "L3 - Building Specialty"):
+        return "Amenity"
+    if section in ("L2 - Support", "L1 - Core"):
+        return "Support"
+    return "Unmatched"
+
+
+# Stage 1 rolls the fine-grained buckets up into Workspace / Amenity /
+# Specialty / Support.
+STAGE1_OF_STAGE2 = {
+    "Individual Work": "Workspace",
+    "Collaboration Open": "Workspace",
+    "Conference Room": "Workspace",
+    "Huddle Room": "Workspace",
+    "Phone Room": "Workspace",
+    "Workspace Specialty": "Specialty",
+    "Amenity": "Amenity",
+    "Support": "Support",
+    "Unmatched": "Unmatched",
+}
+
+
+def stage1_category(stage2: str) -> str:
+    return STAGE1_OF_STAGE2.get(stage2, "Unmatched")
+
+
 def match_room(room_name: str):
     """Match a room name against all architecture name variants (the arch-names
     column) using a fuzzy match against the Revit room name. Returns best match
@@ -218,6 +263,7 @@ def match_room(room_name: str):
         section_for_category = SECTION_OVERRIDE.get(
             best_variant.strip().lower(), l3_section
         )
+        s2 = stage2_category(serraview_name, section_for_category)
         return {
             "serraview_name": serraview_name,
             "matched_variant": best_variant,
@@ -225,6 +271,8 @@ def match_room(room_name: str):
             "l3_section": l3_section,
             "category": get_category(serraview_name, l3_section, multiplier),
             "room_category": room_category(section_for_category),
+            "stage2": s2,
+            "stage1": stage1_category(s2),
             "score": best_score,
         }
     return None

@@ -475,6 +475,7 @@
             <span class="results-count" id="results-count"></span>
             <button class="btn btn-neutral btn-sm btn-itemize" id="itemize-btn" style="display:none">&#9776; Itemize Instances</button>
             <button class="btn btn-neutral btn-sm" id="airtable-btn" style="display:none">&#10003; Compare with Airtable</button>
+            <button class="btn btn-neutral btn-sm" id="pie-chart-btn" style="display:none">&#9684; Generate Pie Chart</button>
             <button class="btn btn-neutral btn-sm" id="export-btn">&#8595; Export CSV</button>
           </div>
         </div>
@@ -491,6 +492,13 @@
           </select>
         </div>
         <div id="rooms-chart-wrap" style="display:none;padding:16px 20px;border-bottom:1px solid var(--border);">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <div style="font-weight:600;font-size:14px;">Space Type Breakdown <span style="color:var(--text-mid);font-weight:400;">(by area)</span></div>
+            <div style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+              <button id="stage1-btn" class="stage-toggle" data-stage="1" style="padding:6px 14px;border:none;background:var(--blue);color:#fff;font-size:13px;cursor:pointer;">Stage 1</button>
+              <button id="stage2-btn" class="stage-toggle" data-stage="2" style="padding:6px 14px;border:none;background:transparent;color:var(--text-mid);font-size:13px;cursor:pointer;border-left:1px solid var(--border);">Stage 2</button>
+            </div>
+          </div>
           <div style="display:flex;align-items:center;gap:32px;flex-wrap:wrap;">
             <div style="width:240px;height:240px;flex:0 0 auto;">
               <canvas id="rooms-pie-chart"></canvas>
@@ -1109,6 +1117,10 @@
       airtableActive = false;
       airtableBtn.style.display = scheduleType === 'furniture' ? '' : 'none';
       itemizeBtn.style.display = scheduleType === 'furniture' ? '' : 'none';
+      // Pie chart is a rooms-only feature; reset it on each new run.
+      pieChartBtn.style.display = scheduleType === 'rooms' ? '' : 'none';
+      pieChartBtn.classList.remove('active');
+      roomsChartVisible = false;
       itemizeActive = false;
       itemizeBtn.classList.remove('active');
       itemizeBtn.textContent = '⊞ Itemize Instances';
@@ -1454,39 +1466,82 @@
     renderRoomsChart(rows);
   }
 
-  // Category → color for the rooms pie chart. Reuses the capacity palette.
-  // Categories are the Space Type Directory L3/L2/L1 sections.
-  const ROOM_CAT_COLORS = {
-    'L3 - Individual Work': '#2e844a',
-    'L3 - Open Collaboration': '#f0a500',
-    'L3 - Enclosed Collaboration': '#0070d2',
-    'L3 - Workspace Specialty': '#9050e9',
-    'L3 - Hospitality': '#e66000',
-    'L3 - Building Specialty': '#0b7cba',
-    'L3 - M&E': '#e6194b',
-    'L2 - Support': '#6e6e6e',
-    'L1 - Core': '#3a3a3a',
+  // Pie-chart colors from the Salesforce Space Type Directory color sheet.
+  // Stage 1 rolls up into Workspace / Amenity / Specialty / Support; Stage 2
+  // breaks Workspace out into the granular space types.
+  const STAGE1_COLORS = {
+    'Workspace': '#078744',
+    'Amenity': '#F15D2F',
+    'Specialty': '#FCC003',
+    'Support': '#C1B9B4',
     'Unmatched': '#c9c9c9',
   };
+  const STAGE2_COLORS = {
+    'Individual Work': '#078744',
+    'Collaboration Open': '#81C77E',
+    'Conference Room': '#0729C3',
+    'Huddle Room': '#0D69FF',
+    'Phone Room': '#0AB2FF',
+    'Workspace Specialty': '#FCC003',
+    'Amenity': '#F15D2F',
+    'Support': '#C1B9B4',
+    'Unmatched': '#c9c9c9',
+  };
+  // Display order so slices/legend are stable regardless of data order.
+  const STAGE1_ORDER = ['Workspace', 'Amenity', 'Specialty', 'Support', 'Unmatched'];
+  const STAGE2_ORDER = ['Individual Work', 'Collaboration Open', 'Conference Room',
+    'Huddle Room', 'Phone Room', 'Workspace Specialty', 'Amenity', 'Support', 'Unmatched'];
+  let roomsChartStage = 1;   // 1 or 2
+  let roomsChartVisible = false;
   let roomsPieChart = null;
 
+  // Parse an Area cell ("1,234.5 SF", "1234", etc.) to a number.
+  function parseArea(v) {
+    if (v == null) return 0;
+    const n = parseFloat(String(v).replace(/[^0-9.\-]/g, ''));
+    return isFinite(n) ? n : 0;
+  }
+
+  // Row → pie-chart bucket for the current stage.
+  function roomBucket(r, stage) {
+    if (stage === 2) return r['_stage2'] || 'Unmatched';
+    return r['_stage1'] || 'Unmatched';
+  }
+
+  let lastRoomsRows = [];
+
   function renderRoomsChart(rows) {
+    lastRoomsRows = rows || [];
     const wrap = document.getElementById('rooms-chart-wrap');
-    if (scheduleType !== 'rooms' || !rows.length) {
+    // The chart is opt-in: only show it once the user clicks Generate Pie Chart.
+    if (scheduleType !== 'rooms' || !rows.length || !roomsChartVisible) {
       wrap.style.display = 'none';
       if (roomsPieChart) { roomsPieChart.destroy(); roomsPieChart = null; }
       return;
     }
 
-    // Count rooms per category (respects current filters/search).
-    const counts = {};
+    const stage = roomsChartStage;
+    const palette = stage === 2 ? STAGE2_COLORS : STAGE1_COLORS;
+    const order = stage === 2 ? STAGE2_ORDER : STAGE1_ORDER;
+
+    // Sum area per bucket (respects current filters/search).
+    const areas = {};
     rows.forEach(r => {
-      const cat = r['_category'] || r['Category'] || 'Unmatched';
-      counts[cat] = (counts[cat] || 0) + 1;
+      const cat = roomBucket(r, stage);
+      areas[cat] = (areas[cat] || 0) + parseArea(r['Area']);
     });
-    const cats = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
-    const total = rows.length;
-    const colors = cats.map(c => ROOM_CAT_COLORS[c] || '#c9c9c9');
+    // Order by the template order, then any extras by size.
+    const present = Object.keys(areas).filter(c => areas[c] > 0);
+    const cats = present.sort((a, b) => {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      if (ia !== -1 && ib !== -1) return ia - ib;
+      if (ia !== -1) return -1;
+      if (ib !== -1) return 1;
+      return areas[b] - areas[a];
+    });
+    const total = cats.reduce((s, c) => s + areas[c], 0) || 1;
+    const colors = cats.map(c => palette[c] || '#c9c9c9');
+    const fmt = n => Math.round(n).toLocaleString();
 
     wrap.style.display = '';
 
@@ -1494,32 +1549,58 @@
     const ctx = document.getElementById('rooms-pie-chart').getContext('2d');
     roomsPieChart = new Chart(ctx, {
       type: 'doughnut',
-      data: { labels: cats, datasets: [{ data: cats.map(c => counts[c]), backgroundColor: colors, borderWidth: 1 }] },
+      data: { labels: cats, datasets: [{ data: cats.map(c => areas[c]), backgroundColor: colors, borderWidth: 1 }] },
       options: {
         responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
           tooltip: { callbacks: { label: ctx => {
             const pct = ((ctx.parsed / total) * 100).toFixed(1);
-            return ctx.label + ': ' + ctx.parsed + ' (' + pct + '%)';
+            return ctx.label + ': ' + fmt(ctx.parsed) + ' SF (' + pct + '%)';
           } } },
         },
       },
     });
 
-    // Custom legend with counts.
+    // Custom legend with area + percentage.
     const legend = document.getElementById('rooms-chart-legend');
     legend.innerHTML = '';
     cats.forEach((c, i) => {
-      const pct = ((counts[c] / total) * 100).toFixed(1);
+      const pct = ((areas[c] / total) * 100).toFixed(1);
       const item = document.createElement('div');
       item.style.cssText = 'display:flex;align-items:center;gap:8px;';
       item.innerHTML = '<span style="width:12px;height:12px;border-radius:2px;flex:0 0 auto;background:' + colors[i] + '"></span>'
         + '<span>' + c + '</span>'
-        + '<span style="color:var(--text-mid);margin-left:auto;padding-left:12px;">' + counts[c] + ' &middot; ' + pct + '%</span>';
+        + '<span style="color:var(--text-mid);margin-left:auto;padding-left:12px;">' + fmt(areas[c]) + ' SF &middot; ' + pct + '%</span>';
       legend.appendChild(item);
     });
   }
+
+  // Generate Pie Chart button + Stage 1/2 toggle wiring.
+  const pieChartBtn = document.getElementById('pie-chart-btn');
+  if (pieChartBtn) {
+    pieChartBtn.addEventListener('click', () => {
+      roomsChartVisible = !roomsChartVisible;
+      pieChartBtn.classList.toggle('active', roomsChartVisible);
+      renderRoomsChart(lastRoomsRows);
+      if (roomsChartVisible) {
+        document.getElementById('rooms-chart-wrap').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  }
+  function setChartStage(stage) {
+    roomsChartStage = stage;
+    const b1 = document.getElementById('stage1-btn'), b2 = document.getElementById('stage2-btn');
+    const on = 'var(--blue)', off = 'transparent';
+    b1.style.background = stage === 1 ? on : off;
+    b1.style.color = stage === 1 ? '#fff' : 'var(--text-mid)';
+    b2.style.background = stage === 2 ? on : off;
+    b2.style.color = stage === 2 ? '#fff' : 'var(--text-mid)';
+    renderRoomsChart(lastRoomsRows);
+  }
+  const s1btn = document.getElementById('stage1-btn'), s2btn = document.getElementById('stage2-btn');
+  if (s1btn) s1btn.addEventListener('click', () => setChartStage(1));
+  if (s2btn) s2btn.addEventListener('click', () => setChartStage(2));
 
   airtableBtn.addEventListener('click', () => {
     airtableActive = !airtableActive;

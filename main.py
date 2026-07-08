@@ -769,6 +769,10 @@ def get_schedule(
                 room_name = fp.get("Name", "") or family_name
                 rmatch = cap_eng.match_room(room_name)
                 row["_category"] = rmatch["room_category"] if rmatch else "Unmatched"
+                # Stage 1 (Workspace/Amenity/Specialty/Support) and Stage 2
+                # (Workspace broken out) buckets for the pie charts.
+                row["_stage1"] = rmatch["stage1"] if rmatch else "Unmatched"
+                row["_stage2"] = rmatch["stage2"] if rmatch else "Unmatched"
                 if "Category" in cols:
                     row["Category"] = row["_category"]
 
