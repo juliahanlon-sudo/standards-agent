@@ -41,7 +41,7 @@ SCHEDULE_CATEGORIES = {
 
 PRESET_COLUMNS = {
     "furniture": ["SFDC_Tag Number", "SFDC_Seat Count", "Family", "Type", "Count", "Manufacturer"],
-    "rooms":     ["Number", "Name", "Area", "Level", "Occupancy"],
+    "rooms":     ["Number", "Name", "Category", "Area", "Level", "Occupancy"],
     "floors":    ["Type", "Type Mark", "Level", "Area"],
     "doors":     ["Mark", "Family", "Type", "Level", "From Room", "To Room", "Width", "Height", "Fire Rating", "Hardware Group", "Configuration", "Comments"],
     "casework":  ["Family & Type", "Count", "Manufacturer", "Finish 1"],
@@ -513,6 +513,8 @@ def get_schedule(
         all_param_names.add("Count")
         if schedule_type == "furniture":
             all_param_names.add("Validation Status")
+        if schedule_type == "rooms":
+            all_param_names.add("Category")
         available_columns = sorted(all_param_names)
 
         cols = selected_columns if selected_columns else PRESET_COLUMNS[schedule_type]
@@ -735,6 +737,10 @@ def get_schedule(
                     row[col] = grp.get("area_scheme", "") or fp.get("Area Scheme", "")
                 elif col == "Name" and schedule_type == "areas":
                     row[col] = grp.get("area_name", "") or fp.get("Name", "")
+                elif col == "Category" and schedule_type == "rooms":
+                    room_name = fp.get("Name", "") or family_name
+                    rmatch = cap_eng.match_room(room_name)
+                    row[col] = rmatch["room_category"] if rmatch else "Unmatched"
                 elif col in ("SFDC_Tag Number", "Type Mark"):
                     val = fp.get("SFDC_Tag Number", "") or fp.get("SFDC_TAG NUMBER", "") or fp.get("Type Mark", "")
                     # For floors: if Type Mark empty, extract code from Type name
@@ -756,6 +762,15 @@ def get_schedule(
                     row[col] = fp.get(col, "")
 
             row["_levels"] = dict(grp["levels"])
+
+            # Rooms: categorize by name so the pie chart works even when the
+            # Category column is hidden.
+            if schedule_type == "rooms":
+                room_name = fp.get("Name", "") or family_name
+                rmatch = cap_eng.match_room(room_name)
+                row["_category"] = rmatch["room_category"] if rmatch else "Unmatched"
+                if "Category" in cols:
+                    row["Category"] = row["_category"]
 
             if schedule_type == "furniture":
                 sfdc_tag = fp.get("SFDC_Tag Number", "") or fp.get("SFDC_TAG NUMBER", "")

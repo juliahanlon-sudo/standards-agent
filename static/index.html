@@ -490,6 +490,14 @@
             <option value="">All Area Schemes</option>
           </select>
         </div>
+        <div id="rooms-chart-wrap" style="display:none;padding:16px 20px;border-bottom:1px solid var(--border);">
+          <div style="display:flex;align-items:center;gap:32px;flex-wrap:wrap;">
+            <div style="width:240px;height:240px;flex:0 0 auto;">
+              <canvas id="rooms-pie-chart"></canvas>
+            </div>
+            <div id="rooms-chart-legend" style="display:flex;flex-direction:column;gap:6px;font-size:13px;"></div>
+          </div>
+        </div>
         <div class="table-wrap">
           <table>
             <thead id="table-head"></thead>
@@ -1441,6 +1449,75 @@
         tr.appendChild(td);
       }
       tableBody.appendChild(tr);
+    });
+
+    renderRoomsChart(rows);
+  }
+
+  // Category → color for the rooms pie chart. Reuses the capacity palette.
+  // Categories are the Space Type Directory L3/L2/L1 sections.
+  const ROOM_CAT_COLORS = {
+    'L3 - Individual Work': '#2e844a',
+    'L3 - Open Collaboration': '#f0a500',
+    'L3 - Enclosed Collaboration': '#0070d2',
+    'L3 - Workspace Specialty': '#9050e9',
+    'L3 - Hospitality': '#e66000',
+    'L3 - Building Specialty': '#0b7cba',
+    'L3 - M&E': '#e6194b',
+    'L2 - Support': '#6e6e6e',
+    'L1 - Core': '#3a3a3a',
+    'Unmatched': '#c9c9c9',
+  };
+  let roomsPieChart = null;
+
+  function renderRoomsChart(rows) {
+    const wrap = document.getElementById('rooms-chart-wrap');
+    if (scheduleType !== 'rooms' || !rows.length) {
+      wrap.style.display = 'none';
+      if (roomsPieChart) { roomsPieChart.destroy(); roomsPieChart = null; }
+      return;
+    }
+
+    // Count rooms per category (respects current filters/search).
+    const counts = {};
+    rows.forEach(r => {
+      const cat = r['_category'] || r['Category'] || 'Unmatched';
+      counts[cat] = (counts[cat] || 0) + 1;
+    });
+    const cats = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    const total = rows.length;
+    const colors = cats.map(c => ROOM_CAT_COLORS[c] || '#c9c9c9');
+
+    wrap.style.display = '';
+
+    if (roomsPieChart) roomsPieChart.destroy();
+    const ctx = document.getElementById('rooms-pie-chart').getContext('2d');
+    roomsPieChart = new Chart(ctx, {
+      type: 'doughnut',
+      data: { labels: cats, datasets: [{ data: cats.map(c => counts[c]), backgroundColor: colors, borderWidth: 1 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => {
+            const pct = ((ctx.parsed / total) * 100).toFixed(1);
+            return ctx.label + ': ' + ctx.parsed + ' (' + pct + '%)';
+          } } },
+        },
+      },
+    });
+
+    // Custom legend with counts.
+    const legend = document.getElementById('rooms-chart-legend');
+    legend.innerHTML = '';
+    cats.forEach((c, i) => {
+      const pct = ((counts[c] / total) * 100).toFixed(1);
+      const item = document.createElement('div');
+      item.style.cssText = 'display:flex;align-items:center;gap:8px;';
+      item.innerHTML = '<span style="width:12px;height:12px;border-radius:2px;flex:0 0 auto;background:' + colors[i] + '"></span>'
+        + '<span>' + c + '</span>'
+        + '<span style="color:var(--text-mid);margin-left:auto;padding-left:12px;">' + counts[c] + ' &middot; ' + pct + '%</span>';
+      legend.appendChild(item);
     });
   }
 
