@@ -594,16 +594,20 @@ def get_schedule(
                 if not is_instance and not has_sfdc_data:
                     continue  # skip bare type/category nodes without SFDC data
 
-            # For rooms: skip unplaced rooms. An unplaced (or unenclosed) room
-            # has no level and no computed area, so it shouldn't appear in the
-            # schedule or the pie chart.
+            # For rooms: skip rooms with no area. A placed, enclosed room always
+            # has positive area; zero area means the room is unplaced ("Not
+            # Placed", also no level) or unenclosed ("Not Enclosed"). Neither is
+            # a real space, so keep them out of the schedule and pie chart.
+            # (Area is the reliable signal here — a genuinely placed room can't
+            # exist without a level, so a blank level is just a weaker proxy for
+            # the same thing.)
             if schedule_type == "rooms":
                 area_val = fp_obj.get("Area", "")
                 try:
                     area_num = float(str(area_val).split()[0]) if area_val else 0.0
                 except (ValueError, IndexError):
                     area_num = 0.0
-                if not level and area_num == 0.0:
+                if area_num == 0.0:
                     continue
 
             # For floors: skip elements with no level AND no area (type/category nodes)
