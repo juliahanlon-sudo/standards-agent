@@ -102,7 +102,7 @@ RAW_DIRECTORY = [
     ('Collaboration Space', ['Open Collaboration', 'AI - Collaboration Cafe Area', 'AI - Collaboration Zone', 'AI - Collaborative Work Area', 'AI - Expert Zone', 'AI - Exploration Zone', 'AI - Work Zone', 'Open Air Meeting', 'Open Huddle', 'Pilot Seat', 'Social Lounge Extension', 'Whiteboarding'], 0.5, 'L3 - Open Collaboration'),
     ('Community Table', ['Open Collaboration', 'Library Table', 'Community Table'], 0.5, 'L3 - Open Collaboration'),
     ('Project Bay', ['Open Collaboration'], 0.5, 'L3 - Open Collaboration'),
-    ('Soft Seating', ['Open Collaboration'], 0, 'L3 - Open Collaboration'),
+    ('Soft Seating', ['Open Collaboration', 'Soft Seating'], 0, 'L3 - Open Collaboration'),
     # L3 - Workspace Specialty
     ('Catering Pantry', ['Catering Pantry', 'SIC - Pantry'], 0, 'L3 - Workspace Specialty'),
     ('Flex Room', ['Flex Room', 'Flex Room - Living', 'SIC - Flex Room'], 0, 'L3 - Workspace Specialty'),
