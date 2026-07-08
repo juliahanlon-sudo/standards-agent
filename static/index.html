@@ -1121,6 +1121,7 @@
       pieChartBtn.style.display = scheduleType === 'rooms' ? '' : 'none';
       pieChartBtn.classList.remove('active');
       roomsChartVisible = false;
+      roomCategoryOverrides = {};
       itemizeActive = false;
       itemizeBtn.classList.remove('active');
       itemizeBtn.textContent = '⊞ Itemize Instances';
@@ -1372,6 +1373,38 @@
           tr.appendChild(td);
           return;
         }
+        if (col === 'Category' && scheduleType === 'rooms') {
+          const s2 = effStage2(row);
+          if (s2 === 'Unmatched') {
+            // Uncategorized: flag red and offer an inline mapping dropdown.
+            td.style.background = 'rgba(217,48,37,.08)';
+            const sel = document.createElement('select');
+            sel.style.cssText = 'font:inherit;color:var(--red);border:1px solid var(--red);border-radius:4px;padding:2px 4px;background:#fff;max-width:180px;';
+            const ph = document.createElement('option');
+            ph.value = ''; ph.textContent = '⚠ Map category…'; ph.disabled = true; ph.selected = true;
+            sel.appendChild(ph);
+            ASSIGNABLE_STAGE2.forEach(c => {
+              const o = document.createElement('option');
+              o.value = c; o.textContent = c;
+              sel.appendChild(o);
+            });
+            sel.addEventListener('change', () => {
+              const name = row['Name'] ?? '';
+              if (name) roomCategoryOverrides[name] = sel.value;
+              renderTable();
+            });
+            td.appendChild(sel);
+          } else if (roomCategoryOverrides[row['Name'] ?? '']) {
+            // Manually mapped — show the assigned category in blue.
+            td.textContent = s2;
+            td.style.color = 'var(--blue)';
+            td.title = 'Manually mapped';
+          } else {
+            td.textContent = row[col] ?? row['_category'] ?? '';
+          }
+          tr.appendChild(td);
+          return;
+        }
         if (col === 'Validation Status') {
           const color = row['_validation_color'] || 'grey';
           const badge = document.createElement('span');
@@ -1487,9 +1520,25 @@
     'Unmatched': '#c9c9c9',
   };
   // Display order so slices/legend are stable regardless of data order.
-  const STAGE1_ORDER = ['Workspace', 'Amenity', 'Support', 'Unmatched'];
+  const STAGE1_ORDER = ['Workspace', 'Amenity', 'Support'];
   const STAGE2_ORDER = ['Individual Work', 'Collaboration Open', 'Conference Room',
-    'Huddle Room', 'Phone Room', 'Workspace Specialty', 'Amenity', 'Support', 'Unmatched'];
+    'Huddle Room', 'Phone Room', 'Workspace Specialty', 'Amenity', 'Support'];
+
+  // Stage 2 → Stage 1 rollup (mirrors STAGE1_OF_STAGE2 in capacity_engine.py).
+  const STAGE1_OF_STAGE2 = {
+    'Individual Work': 'Workspace', 'Collaboration Open': 'Workspace',
+    'Conference Room': 'Workspace', 'Huddle Room': 'Workspace',
+    'Phone Room': 'Workspace', 'Workspace Specialty': 'Workspace',
+    'Amenity': 'Amenity', 'Support': 'Support',
+  };
+  // The Stage 2 categories a user can manually assign to an unmatched room.
+  const ASSIGNABLE_STAGE2 = ['Individual Work', 'Collaboration Open', 'Conference Room',
+    'Huddle Room', 'Phone Room', 'Workspace Specialty', 'Amenity', 'Support'];
+
+  // User overrides for unmatched rooms, keyed by room name. Persisted only for
+  // the current session so re-running/re-filtering keeps the mapping.
+  let roomCategoryOverrides = {};
+
   let roomsChartStage = 1;   // 1 or 2
   let roomsChartVisible = false;
   let roomsPieChart = null;
@@ -1501,10 +1550,23 @@
     return isFinite(n) ? n : 0;
   }
 
-  // Row → pie-chart bucket for the current stage.
+  // Effective Stage 2 category for a room, honoring any user override.
+  function effStage2(r) {
+    const ov = roomCategoryOverrides[r['Name'] ?? ''];
+    if (ov) return ov;
+    return r['_stage2'] || 'Unmatched';
+  }
+
+  // Is this room still uncategorized (and not yet manually mapped)?
+  function isUnmatchedRoom(r) {
+    return effStage2(r) === 'Unmatched';
+  }
+
+  // Row → pie-chart bucket for the current stage (override-aware).
   function roomBucket(r, stage) {
-    if (stage === 2) return r['_stage2'] || 'Unmatched';
-    return r['_stage1'] || 'Unmatched';
+    const s2 = effStage2(r);
+    if (stage === 2) return s2;
+    return STAGE1_OF_STAGE2[s2] || 'Unmatched';
   }
 
   let lastRoomsRows = [];
@@ -1522,6 +1584,23 @@
     const stage = roomsChartStage;
     const palette = stage === 2 ? STAGE2_COLORS : STAGE1_COLORS;
     const order = stage === 2 ? STAGE2_ORDER : STAGE1_ORDER;
+
+    // No Unmatched slice: every room must be categorized (or manually mapped)
+    // before the chart renders. Unmatched rooms are flagged red in the table.
+    const unmatched = rows.filter(isUnmatchedRoom);
+    if (unmatched.length) {
+      wrap.style.display = 'none';
+      if (roomsPieChart) { roomsPieChart.destroy(); roomsPieChart = null; }
+      roomsChartVisible = false;
+      pieChartBtn.classList.remove('active');
+      const names = [...new Set(unmatched.map(r => r['Name'] || '(unnamed)'))];
+      alert(unmatched.length + ' room' + (unmatched.length !== 1 ? 's' : '')
+        + ' still need a category before the pie chart can be generated.\n\n'
+        + 'They are highlighted in red in the schedule — use the dropdown in the '
+        + 'Category column to map each one.\n\nUnmatched: '
+        + names.slice(0, 20).join(', ') + (names.length > 20 ? ', …' : ''));
+      return;
+    }
 
     // Sum area per bucket (respects current filters/search).
     const areas = {};
@@ -1643,7 +1722,15 @@
       if (query) return Object.values(r).some(v => String(v).toLowerCase().includes(query));
       return true;
     });
-    const csv = [cols, ...rows.map(r => cols.map(c => '"' + String(r[c]??'').replace(/"/g,'""') + '"'))]
+    const cellVal = (r, c) => {
+      // Rooms: export the effective (possibly manually mapped) category.
+      if (c === 'Category' && scheduleType === 'rooms') {
+        const s2 = effStage2(r);
+        return s2 === 'Unmatched' ? (r[c] ?? '') : s2;
+      }
+      return r[c] ?? '';
+    };
+    const csv = [cols, ...rows.map(r => cols.map(c => '"' + String(cellVal(r, c)).replace(/"/g,'""') + '"'))]
       .map(r => r.join(',')).join('\n');
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
