@@ -221,7 +221,7 @@ STAGE1_OF_STAGE2 = {
     "Conference Room": "Workspace",
     "Huddle Room": "Workspace",
     "Phone Room": "Workspace",
-    "Workspace Specialty": "Specialty",
+    "Workspace Specialty": "Workspace",
     "Amenity": "Amenity",
     "Support": "Support",
     "Unmatched": "Unmatched",
