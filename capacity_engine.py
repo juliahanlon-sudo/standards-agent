@@ -241,6 +241,30 @@ def match_room(room_name: str):
         return None
 
     name_lower = room_name.strip().lower()
+
+    # Stairs default to Core, except Communicating / Internal stairs (which are
+    # tenant circulation, not building shell) -> Support. Handled explicitly so
+    # fuzzy scoring doesn't mis-route "Egress Stair" or miss "Internal Stair".
+    if "stair" in name_lower:
+        if "communicating" in name_lower or "internal" in name_lower:
+            section = "L2 - Support"
+            serra = "Communicating Stair"
+        else:
+            section = "L1 - Core"
+            serra = "Fire Stairs"
+        s2 = stage2_category(serra, section)
+        return {
+            "serraview_name": serra,
+            "matched_variant": room_name.strip(),
+            "multiplier": 0,
+            "l3_section": section,
+            "category": get_category(serra, section, 0),
+            "room_category": room_category(section),
+            "stage2": s2,
+            "stage1": stage1_category(s2),
+            "score": 100,
+        }
+
     best_score = 0
     best_entry = None
     best_variant = None
